@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.logger import configure_logging
 from api.database import connect_to_mongo, close_mongo_connection
-from api.routes import clusters_router, nodes_router
+from api.routes import clusters_router, engines_router, nodes_router
 
 configure_logging()
 
@@ -31,6 +31,7 @@ app.add_middleware(
 )
 
 app.include_router(clusters_router)
+app.include_router(engines_router)
 app.include_router(nodes_router)
 
 
