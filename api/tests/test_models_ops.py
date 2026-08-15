@@ -75,3 +75,39 @@ async def test_download_url_and_hf(app, monkeypatch):
         )
         assert fail.status_code == 502
         assert fail.json()["detail"].startswith("Download failed:")
+
+
+@pytest.mark.asyncio
+async def test_list_failed_command_is_502(app, monkeypatch):
+    async def fake_run(node, command, timeout=30.0):
+        if "stat" in command or "find" in command:
+            return FakeResult("", exit_status=1, stderr="find: error")
+        return FakeResult("/Users/x/models\n")
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_run)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed(client)
+        listed = await client.get(f"/nodes/{node['id']}/models")
+        assert listed.status_code == 502
+        assert listed.json()["detail"].startswith("SSH failed:")
+
+
+@pytest.mark.asyncio
+async def test_list_skips_malformed_stat_lines(app, monkeypatch):
+    async def fake_run(node, command, timeout=30.0):
+        if "stat" in command or "gguf" in command:
+            return FakeResult(
+                "not-a-stat-line\n"
+                "phi.gguf\tnot-a-number\t2026-08-15T00:00:00\n"
+                "phi.gguf\t1234\t2026-08-15T00:00:00\n"
+            )
+        return FakeResult("OK\n")
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_run)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed(client)
+        listed = await client.get(f"/nodes/{node['id']}/models")
+        assert listed.status_code == 200
+        assert listed.json() == [
+            {"name": "phi.gguf", "sizeBytes": 1234, "mtime": "2026-08-15T00:00:00"}
+        ]

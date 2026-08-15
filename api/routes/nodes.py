@@ -213,12 +213,22 @@ async def list_models(node_id: str):
         result = await ssh_mod.run_command(node, LlamaCppEngine.list_models_command(model_dir))
     except ssh_mod.SshError as exc:
         raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+    if result.exit_status != 0:
+        raise HTTPException(
+            status_code=502,
+            detail=f"SSH failed: {result.stderr or result.stdout or 'list failed'}",
+        )
     items = []
     for line in result.stdout.splitlines():
         parts = line.split("\t")
-        if len(parts) >= 3:
-            name = parts[0].rstrip("/").split("/")[-1]
-            items.append({"name": name, "sizeBytes": int(parts[1]), "mtime": parts[2]})
+        if len(parts) < 3:
+            continue
+        try:
+            size_bytes = int(parts[1])
+        except ValueError:
+            continue
+        name = parts[0].rstrip("/").split("/")[-1]
+        items.append({"name": name, "sizeBytes": size_bytes, "mtime": parts[2]})
     return items
 
 
