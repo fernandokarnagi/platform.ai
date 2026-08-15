@@ -111,6 +111,12 @@ function assistantContent(reply: { choices?: Array<{ message?: ChatMessage }> })
   return '(empty reply)';
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 export default function NodeDetailScreen() {
   const { id } = useParams<{ id: string }>();
 
@@ -209,25 +215,33 @@ export default function NodeDetailScreen() {
     void load('full');
   }, [load]);
 
-  async function refreshAfterEngine() {
+  async function refreshAfterEngine(waitForOpenAI = false) {
     if (!id) return;
     const details: string[] = [];
-    const [statusRes, engineRes] = await Promise.allSettled([
-      nodeService.status(id),
-      nodeService.engine(id),
-    ]);
-    if (statusRes.status === 'fulfilled') {
-      applyStatus(statusRes.value);
-      if (statusRes.value.detail) details.push(statusRes.value.detail);
-    } else {
-      details.push(errorMessage(statusRes.reason));
+    try {
+      setEngine(await nodeService.engine(id));
+    } catch (err) {
+      details.push(errorMessage(err));
     }
-    if (engineRes.status === 'fulfilled') {
-      setEngine(engineRes.value);
-    } else {
-      details.push(errorMessage(engineRes.reason));
+
+    const attempts = waitForOpenAI ? 5 : 1;
+    let lastStatus: NodeStatus | undefined;
+    let lastStatusError: string | undefined;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (attempt > 0) await sleep(1000);
+      try {
+        lastStatus = await nodeService.status(id);
+        lastStatusError = undefined;
+        applyStatus(lastStatus);
+        if (!waitForOpenAI || lastStatus.openai === 'up') break;
+      } catch (err) {
+        lastStatusError = errorMessage(err);
+      }
     }
-    if (details.length) setError(details.join(' · '));
+
+    if (lastStatusError) details.push(lastStatusError);
+    else if (lastStatus?.detail) details.push(lastStatus.detail);
+    setError(details.length ? details.join(' · ') : null);
   }
 
   async function openStart() {
@@ -260,7 +274,7 @@ export default function NodeDetailScreen() {
     try {
       setEngine(await nodeService.start(id, startFilename));
       setStartOpen(false);
-      await refreshAfterEngine();
+      await refreshAfterEngine(true);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -288,7 +302,7 @@ export default function NodeDetailScreen() {
     setError(null);
     try {
       setEngine(await nodeService.restart(id));
-      await refreshAfterEngine();
+      await refreshAfterEngine(true);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -383,7 +397,9 @@ export default function NodeDetailScreen() {
       return;
     }
 
-    const nextMessages: ChatMessage[] = [...messages, { role: 'user', content: text }];
+    const previousDraft = draft;
+    const previousMessages = messages;
+    const nextMessages: ChatMessage[] = [...previousMessages, { role: 'user', content: text }];
     const payload: ChatIn = { model: chatModel, messages: nextMessages };
     if (temp.value !== undefined) payload.temperature = temp.value;
     if (p.value !== undefined) payload.topP = p.value;
@@ -397,6 +413,8 @@ export default function NodeDetailScreen() {
       const reply = await nodeService.chat(id, payload);
       setMessages([...nextMessages, { role: 'assistant', content: assistantContent(reply) }]);
     } catch (err) {
+      setMessages(previousMessages);
+      setDraft(previousDraft);
       setError(errorMessage(err));
     } finally {
       setBusy(null);
