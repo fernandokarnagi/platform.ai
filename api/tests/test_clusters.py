@@ -43,3 +43,25 @@ async def test_invalid_cluster_id(app):
         response = await client.get("/clusters/nope")
         assert response.status_code == 400
         assert response.json()["detail"] == "Invalid id"
+
+
+@pytest.mark.asyncio
+async def test_delete_cluster_with_nodes_conflict(app):
+    async with await _client(app) as client:
+        created = await client.post("/clusters", json={"name": "desk-macs"})
+        cluster_id = created.json()["id"]
+        registered = await client.post(
+            f"/clusters/{cluster_id}/nodes",
+            json={
+                "name": "mac-1",
+                "host": "192.168.1.10",
+                "sshUser": "fernando",
+                "sshAuthType": "password",
+                "sshPassword": "secret",
+                "openaiBaseUrl": "http://192.168.1.10:8080/v1",
+            },
+        )
+        assert registered.status_code == 201
+        deleted = await client.delete(f"/clusters/{cluster_id}")
+        assert deleted.status_code == 409
+        assert deleted.json()["detail"] == "Cluster has nodes"
