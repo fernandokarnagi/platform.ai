@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { nodeService } from '@services/nodeService';
+import { apiErrorStatus, nodeService } from '@services/nodeService';
 import type { CacheType, FitMode, FlashAttn, ServerParams } from '@/types';
 
 const inputClass =
@@ -42,6 +42,7 @@ export interface ServerParamsFieldsProps {
   listenPort: number;
   modelDir: string;
   onChange: (params: ServerParams) => void;
+  onPreviewError: (message: string | null) => void;
 }
 
 export default function ServerParamsFields({
@@ -50,6 +51,7 @@ export default function ServerParamsFields({
   listenPort,
   modelDir,
   onChange,
+  onPreviewError,
 }: ServerParamsFieldsProps) {
   const [command, setCommand] = useState('');
   const [extraFlagsError, setExtraFlagsError] = useState<string | null>(null);
@@ -68,9 +70,17 @@ export default function ServerParamsFields({
           if (cancelled) return;
           setCommand(preview.command);
           setExtraFlagsError(null);
+          onPreviewError(null);
         } catch (err) {
           if (cancelled) return;
-          setExtraFlagsError(errorMessage(err));
+          const message = errorMessage(err);
+          if (apiErrorStatus(err) === 400) {
+            setExtraFlagsError(message);
+            onPreviewError(null);
+          } else {
+            setExtraFlagsError(null);
+            onPreviewError(message);
+          }
         }
       })();
     }, 300);
@@ -78,7 +88,7 @@ export default function ServerParamsFields({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [listenHost, listenPort, modelDir, params]);
+  }, [listenHost, listenPort, modelDir, params, onPreviewError]);
 
   function patch(partial: Partial<ServerParams>) {
     onChange({ ...params, ...partial });

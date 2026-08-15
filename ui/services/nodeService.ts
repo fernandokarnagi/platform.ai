@@ -17,6 +17,20 @@ import type {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8091';
 
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+export function apiErrorStatus(err: unknown): number | undefined {
+  return err instanceof ApiError ? err.status : undefined;
+}
+
 async function readDetail(response: Response): Promise<string> {
   try {
     const body: unknown = await response.json();
@@ -49,7 +63,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!response.ok) {
-    throw new Error(await readDetail(response));
+    throw new ApiError(await readDetail(response), response.status);
   }
   if (response.status === 204) {
     return undefined as T;

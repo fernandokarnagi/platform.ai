@@ -86,6 +86,7 @@ export default function NodeFormScreen() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [sshResult, setSshResult] = useState<TestSshResult | null>(null);
   const [loadedClusterId, setLoadedClusterId] = useState<string | null>(clusterId ?? null);
 
@@ -232,7 +233,7 @@ export default function NodeFormScreen() {
         <p className="mt-1 text-sm text-slate-500">llama.cpp · no login · SSH secrets stay on this laptop</p>
       </div>
 
-      {error ? <ErrorBanner message={error} /> : null}
+      {error ? <ErrorBanner message={error} /> : previewError ? <ErrorBanner message={previewError} /> : null}
 
       {loading ? <p className="text-sm text-slate-500">Loading…</p> : null}
 
@@ -379,6 +380,7 @@ export default function NodeFormScreen() {
           listenPort={listenPort}
           modelDir={modelDir}
           onChange={setServerParams}
+          onPreviewError={setPreviewError}
         />
 
         {isEdit ? <SetupInstructions /> : null}
