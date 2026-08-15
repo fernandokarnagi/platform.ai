@@ -4,7 +4,8 @@ from api.database import get_database
 from api.engines.llama_cpp import ForbiddenExtraFlagsError, LlamaCppEngine
 from api.helpers import node_helper, parse_object_id, safe_model_filename
 from api.logger import get_logger
-from api.models.models import DeleteModelIn, DownloadModelIn, NodeIn, NodeUpdate, StartEngineIn
+from api.models.models import ChatIn, DeleteModelIn, DownloadModelIn, NodeIn, NodeUpdate, StartEngineIn
+from api.services import openai_proxy as openai_proxy
 from api.services import ssh as ssh_mod
 
 router = APIRouter(tags=["nodes"])
@@ -283,3 +284,60 @@ async def delete_model(node_id: str, payload: DeleteModelIn):
     except ssh_mod.SshError as exc:
         raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
     return None
+
+
+@router.get("/nodes/{node_id}/status")
+async def node_status(node_id: str):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    body = {"ssh": "down", "openai": "down", "models": [], "detail": None}
+    try:
+        await ssh_mod.run_command(node, "uname -s")
+        body["ssh"] = "up"
+    except ssh_mod.SshError as exc:
+        body["detail"] = f"SSH failed: {exc}"
+        return body
+    try:
+        models = await openai_proxy.fetch_models(node.get("openaiBaseUrl") or "", node.get("openaiApiKey") or "")
+        body["openai"] = "up"
+        body["models"] = [m.get("id") for m in models if m.get("id")]
+    except openai_proxy.OpenAIProxyError as exc:
+        body["detail"] = str(exc)
+    return body
+
+
+@router.get("/nodes/{node_id}/models/openai")
+async def openai_models(node_id: str):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    try:
+        models = await openai_proxy.fetch_models(node.get("openaiBaseUrl") or "", node.get("openaiApiKey") or "")
+        return {"data": models}
+    except openai_proxy.OpenAIProxyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/nodes/{node_id}/chat")
+async def chat(node_id: str, payload: ChatIn):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    body = {
+        "model": payload.model,
+        "messages": [m.model_dump() for m in payload.messages],
+        "stream": False,
+    }
+    if payload.temperature is not None:
+        body["temperature"] = payload.temperature
+    if payload.topP is not None:
+        body["top_p"] = payload.topP
+    if payload.maxTokens is not None:
+        body["max_tokens"] = payload.maxTokens
+    try:
+        return await openai_proxy.chat_completions(
+            node.get("openaiBaseUrl") or "",
+            node.get("openaiApiKey") or "",
+            body,
+        )
+    except openai_proxy.OpenAIProxyError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
