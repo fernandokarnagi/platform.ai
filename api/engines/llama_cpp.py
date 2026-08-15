@@ -148,3 +148,32 @@ class LlamaCppEngine:
     def model_exists_command(model_dir: str, filename: str) -> str:
         path = f"{model_dir.rstrip('/')}/{filename}"
         return f"if [ -f {shlex.quote(path)} ]; then echo OK; else echo MISSING; fi"
+
+    @staticmethod
+    def hf_url(repo: str, filename: str) -> str:
+        return f"https://huggingface.co/{repo}/resolve/main/{filename}"
+
+    @staticmethod
+    def list_models_command(model_dir: str) -> str:
+        return (
+            f"mkdir -p {shlex.quote(model_dir)} && "
+            f"find {shlex.quote(model_dir)} -maxdepth 1 -name '*.gguf' -type f -print0 | "
+            "while IFS= read -r -d '' f; do "
+            "stat -f '%N\t%z\t%Sm' -t '%Y-%m-%dT%H:%M:%S' \"$f\" 2>/dev/null || "
+            "stat -c '%n\t%s\t%y' \"$f\"; "
+            "done"
+        )
+
+    @staticmethod
+    def download_command(model_dir: str, filename: str, url: str, token: str = "") -> str:
+        dest = f"{model_dir.rstrip('/')}/{filename}"
+        header = f"-H {shlex.quote('Authorization: Bearer ' + token)} " if token else ""
+        return (
+            f"mkdir -p {shlex.quote(model_dir)} && "
+            f"curl -L --fail {header}-o {shlex.quote(dest)} {shlex.quote(url)}"
+        )
+
+    @staticmethod
+    def delete_model_command(model_dir: str, filename: str) -> str:
+        dest = f"{model_dir.rstrip('/')}/{filename}"
+        return f"rm -f {shlex.quote(dest)}"

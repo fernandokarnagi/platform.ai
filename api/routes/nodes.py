@@ -4,7 +4,7 @@ from api.database import get_database
 from api.engines.llama_cpp import ForbiddenExtraFlagsError, LlamaCppEngine
 from api.helpers import node_helper, parse_object_id, safe_model_filename
 from api.logger import get_logger
-from api.models.models import NodeIn, NodeUpdate, StartEngineIn
+from api.models.models import DeleteModelIn, DownloadModelIn, NodeIn, NodeUpdate, StartEngineIn
 from api.services import ssh as ssh_mod
 
 router = APIRouter(tags=["nodes"])
@@ -202,3 +202,74 @@ async def restart_engine(node_id: str):
         raise HTTPException(status_code=400, detail="No previous start")
     await stop_engine(node_id)
     return await start_engine(node_id, StartEngineIn(modelFilename=filename))
+
+
+@router.get("/nodes/{node_id}/models")
+async def list_models(node_id: str):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    try:
+        model_dir = await _expand_dir(node)
+        result = await ssh_mod.run_command(node, LlamaCppEngine.list_models_command(model_dir))
+    except ssh_mod.SshError as exc:
+        raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+    items = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            name = parts[0].rstrip("/").split("/")[-1]
+            items.append({"name": name, "sizeBytes": int(parts[1]), "mtime": parts[2]})
+    return items
+
+
+@router.post("/nodes/{node_id}/models/download")
+async def download_model(node_id: str, payload: DownloadModelIn):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    try:
+        if payload.source == "huggingface":
+            if not payload.repo or not payload.filename:
+                raise HTTPException(status_code=400, detail="repo and filename required")
+            filename = safe_model_filename(payload.filename)
+            url = LlamaCppEngine.hf_url(payload.repo, filename)
+            token = payload.hfToken or node.get("hfToken") or ""
+        elif payload.source == "url":
+            if not payload.url:
+                raise HTTPException(status_code=400, detail="url required")
+            filename = payload.filename or payload.url.rstrip("/").split("?")[0].split("/")[-1]
+            filename = safe_model_filename(filename)
+            url = payload.url
+            token = ""
+        else:
+            raise HTTPException(status_code=400, detail="source must be huggingface or url")
+        model_dir = await _expand_dir(node)
+        result = await ssh_mod.run_command(
+            node,
+            LlamaCppEngine.download_command(model_dir, filename, url, token),
+            timeout=3600,
+        )
+        if result.exit_status != 0:
+            raise HTTPException(status_code=502, detail=f"Download failed: {result.stderr or result.stdout}")
+        return {"name": filename, "url": url}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid filename") from exc
+    except HTTPException:
+        raise
+    except ssh_mod.SshError as exc:
+        raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+
+
+@router.delete("/nodes/{node_id}/models", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_model(node_id: str, payload: DeleteModelIn):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    try:
+        filename = safe_model_filename(payload.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid filename") from exc
+    try:
+        model_dir = await _expand_dir(node)
+        await ssh_mod.run_command(node, LlamaCppEngine.delete_model_command(model_dir, filename))
+    except ssh_mod.SshError as exc:
+        raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+    return None
