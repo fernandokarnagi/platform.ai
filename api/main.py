@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.logger import configure_logging
 from api.database import connect_to_mongo, close_mongo_connection
+from api.routes import clusters_router
 
 configure_logging()
 
@@ -28,6 +29,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(clusters_router)
 
 
 @app.get("/health")
