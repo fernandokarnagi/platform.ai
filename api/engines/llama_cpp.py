@@ -127,7 +127,7 @@ class LlamaCppEngine:
     def start_command(binary: str, argv: list[str]) -> str:
         quoted = " ".join(shlex.quote(part) for part in argv)
         return (
-            f"mkdir -p ~/.platformai && "
+            f"mkdir -p ~/.platformai; "
             f"nohup {shlex.quote(binary)} {quoted} > ~/.platformai/llama-server.log 2>&1 & echo $! "
             f"| tee ~/.platformai/llama-server.pid"
         )

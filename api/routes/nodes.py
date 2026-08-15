@@ -99,9 +99,18 @@ async def test_ssh(node_id: str):
     return {"ok": True, "uname": uname, "llamaServer": binary}
 
 
+def _last_line(stdout: str) -> str:
+    lines = [line.strip() for line in (stdout or "").splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
 async def _expand_dir(node):
-    result = await ssh_mod.run_command(node, f"echo {node.get('modelDir') or '~/models'}")
-    return result.stdout.strip().splitlines()[0]
+    model_dir = node.get("modelDir") or "~/models"
+    result = await ssh_mod.run_command(node, LlamaCppEngine.expand_model_dir_command(model_dir))
+    expanded = _last_line(result.stdout)
+    if not expanded:
+        raise HTTPException(status_code=502, detail="SSH failed: empty modelDir")
+    return expanded
 
 
 async def _resolve_binary(node):
@@ -153,7 +162,12 @@ async def start_engine(node_id: str, payload: StartEngineIn):
         binary = await _resolve_binary(node)
         argv = LlamaCppEngine.build_argv(node, filename, model_dir)
         started = await ssh_mod.run_command(node, LlamaCppEngine.start_command(binary, argv), timeout=20)
-        pid = started.stdout.strip().splitlines()[-1]
+        pid = _last_line(started.stdout)
+        if not pid:
+            raise HTTPException(status_code=502, detail="SSH failed: engine did not start")
+        alive = await ssh_mod.run_command(node, LlamaCppEngine.pid_alive_command(pid))
+        if "alive" not in alive.stdout:
+            raise HTTPException(status_code=502, detail="SSH failed: engine did not start")
         last_start = {"modelFilename": filename, "argv": argv, "startedAt": datetime.utcnow().isoformat()}
         await db.nodes.update_one({"_id": node["_id"]}, {"$set": {"lastStart": last_start, "updatedAt": datetime.utcnow()}})
         return {"running": True, "pid": pid, "lastStart": last_start}
