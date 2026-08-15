@@ -7,7 +7,7 @@ import type { Cluster, EngineStatus, Node, NodeStatus } from '@/types';
 
 interface NodeProbe {
   status: NodeStatus;
-  engine: EngineStatus;
+  engine: EngineStatus | null;
 }
 
 function errorMessage(err: unknown): string {
@@ -40,30 +40,44 @@ export default function ClusterDetailScreen() {
   const probeNodes = useCallback(async (nodeList: Node[]) => {
     setProbing(true);
     const next: Record<string, NodeProbe> = {};
+    const details: string[] = [];
+
+    const addDetail = (nodeName: string, message: string) => {
+      const text = `${nodeName}: ${message}`;
+      if (message && !details.includes(text)) details.push(text);
+    };
+
     await Promise.all(
       nodeList.map(async (node) => {
         const [statusRes, engineRes] = await Promise.allSettled([
           nodeService.status(node.id),
           nodeService.engine(node.id),
         ]);
-        next[node.id] = {
-          status:
-            statusRes.status === 'fulfilled'
-              ? statusRes.value
-              : {
-                  ssh: 'down',
-                  openai: 'down',
-                  models: [],
-                  detail: errorMessage(statusRes.reason),
-                },
-          engine:
-            engineRes.status === 'fulfilled'
-              ? engineRes.value
-              : { running: false, pid: null, lastStart: null },
-        };
+
+        let status: NodeStatus;
+        if (statusRes.status === 'fulfilled') {
+          status = statusRes.value;
+          if (status.ssh === 'down' && status.detail) {
+            addDetail(node.name, status.detail);
+          }
+        } else {
+          const detail = errorMessage(statusRes.reason);
+          status = { ssh: 'down', openai: 'down', models: [], detail };
+          addDetail(node.name, detail);
+        }
+
+        let engine: EngineStatus | null = null;
+        if (engineRes.status === 'fulfilled') {
+          engine = engineRes.value;
+        } else {
+          addDetail(node.name, errorMessage(engineRes.reason));
+        }
+
+        next[node.id] = { status, engine };
       }),
     );
     setProbes(next);
+    setError(details.length ? details.join(' · ') : null);
     setProbing(false);
   }, []);
 
@@ -190,8 +204,10 @@ export default function ClusterDetailScreen() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {probe ? (
+                        {probe?.engine ? (
                           <Badge ok={probe.engine.running} on="running" off="stopped" />
+                        ) : probe ? (
+                          <span className="text-slate-400">—</span>
                         ) : (
                           <span className="text-slate-400">…</span>
                         )}
