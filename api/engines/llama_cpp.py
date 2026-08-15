@@ -100,3 +100,51 @@ class LlamaCppEngine:
         model_dir = node.get("modelDir") or "~/models"
         argv = LlamaCppEngine.build_argv(node, model_filename, model_dir)
         return "llama-server " + " ".join(argv)
+
+    @staticmethod
+    def resolve_binary_command() -> str:
+        return (
+            "if command -v llama-server >/dev/null 2>&1; then command -v llama-server; "
+            "elif command -v brew >/dev/null 2>&1 && [ -x \"$(brew --prefix)/bin/llama-server\" ]; "
+            "then echo \"$(brew --prefix)/bin/llama-server\"; "
+            "elif [ -x /usr/local/bin/llama-server ]; then echo /usr/local/bin/llama-server; "
+            "else echo MISSING; fi"
+        )
+
+    @staticmethod
+    def expand_model_dir_command(model_dir: str) -> str:
+        return f"mkdir -p {shlex.quote(model_dir)} ~/.platformai && echo {model_dir}"
+
+    @staticmethod
+    def read_pid_command() -> str:
+        return "if [ -f ~/.platformai/llama-server.pid ]; then cat ~/.platformai/llama-server.pid; fi"
+
+    @staticmethod
+    def pid_alive_command(pid: str) -> str:
+        return f"if kill -0 {shlex.quote(pid)} 2>/dev/null; then echo alive; fi"
+
+    @staticmethod
+    def start_command(binary: str, argv: list[str]) -> str:
+        quoted = " ".join(shlex.quote(part) for part in argv)
+        return (
+            f"mkdir -p ~/.platformai && "
+            f"nohup {shlex.quote(binary)} {quoted} > ~/.platformai/llama-server.log 2>&1 & echo $! "
+            f"| tee ~/.platformai/llama-server.pid"
+        )
+
+    @staticmethod
+    def stop_command() -> str:
+        return (
+            "if [ -f ~/.platformai/llama-server.pid ]; then "
+            "PID=$(cat ~/.platformai/llama-server.pid); "
+            "if kill -0 $PID 2>/dev/null; then kill $PID; "
+            "for i in 1 2 3 4 5 6 7 8; do kill -0 $PID 2>/dev/null || break; sleep 1; done; "
+            "kill -0 $PID 2>/dev/null && kill -9 $PID; fi; "
+            "rm -f ~/.platformai/llama-server.pid; echo STOPPED; "
+            "else echo STOPPED; fi"
+        )
+
+    @staticmethod
+    def model_exists_command(model_dir: str, filename: str) -> str:
+        path = f"{model_dir.rstrip('/')}/{filename}"
+        return f"if [ -f {shlex.quote(path)} ]; then echo OK; else echo MISSING; fi"

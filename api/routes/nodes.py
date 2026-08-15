@@ -1,10 +1,10 @@
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from api.database import get_database
-from api.engines.llama_cpp import LlamaCppEngine
-from api.helpers import node_helper, parse_object_id
+from api.engines.llama_cpp import ForbiddenExtraFlagsError, LlamaCppEngine
+from api.helpers import node_helper, parse_object_id, safe_model_filename
 from api.logger import get_logger
-from api.models.models import NodeIn, NodeUpdate
+from api.models.models import NodeIn, NodeUpdate, StartEngineIn
 from api.services import ssh as ssh_mod
 
 router = APIRouter(tags=["nodes"])
@@ -97,3 +97,94 @@ async def test_ssh(node_id: str):
     if result.exit_status != 0:
         raise HTTPException(status_code=502, detail=f"SSH failed: {result.stderr or result.stdout}")
     return {"ok": True, "uname": uname, "llamaServer": binary}
+
+
+async def _expand_dir(node):
+    result = await ssh_mod.run_command(node, f"echo {node.get('modelDir') or '~/models'}")
+    return result.stdout.strip().splitlines()[0]
+
+
+async def _resolve_binary(node):
+    result = await ssh_mod.run_command(node, LlamaCppEngine.resolve_binary_command())
+    binary = result.stdout.strip().splitlines()[0] if result.stdout.strip() else "MISSING"
+    if binary == "MISSING":
+        raise HTTPException(status_code=502, detail="llama-server not found on node")
+    return binary
+
+
+async def _engine_status(node):
+    pid_res = await ssh_mod.run_command(node, LlamaCppEngine.read_pid_command())
+    pid = pid_res.stdout.strip()
+    running = False
+    if pid:
+        alive = await ssh_mod.run_command(node, LlamaCppEngine.pid_alive_command(pid))
+        running = "alive" in alive.stdout
+    return {"running": running, "pid": pid if running else None, "lastStart": node.get("lastStart")}
+
+
+@router.get("/nodes/{node_id}/engine")
+async def get_engine(node_id: str):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    try:
+        status_body = await _engine_status(node)
+        try:
+            status_body["llamaServer"] = await _resolve_binary(node)
+        except HTTPException:
+            status_body["llamaServer"] = None
+        return status_body
+    except ssh_mod.SshError as exc:
+        raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+
+
+@router.post("/nodes/{node_id}/engine/start")
+async def start_engine(node_id: str, payload: StartEngineIn):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    try:
+        filename = safe_model_filename(payload.modelFilename)
+        current = await _engine_status(node)
+        if current["running"]:
+            raise HTTPException(status_code=409, detail="Engine already running")
+        model_dir = await _expand_dir(node)
+        exists = await ssh_mod.run_command(node, LlamaCppEngine.model_exists_command(model_dir, filename))
+        if "OK" not in exists.stdout:
+            raise HTTPException(status_code=404, detail="Model not found")
+        binary = await _resolve_binary(node)
+        argv = LlamaCppEngine.build_argv(node, filename, model_dir)
+        started = await ssh_mod.run_command(node, LlamaCppEngine.start_command(binary, argv), timeout=20)
+        pid = started.stdout.strip().splitlines()[-1]
+        last_start = {"modelFilename": filename, "argv": argv, "startedAt": datetime.utcnow().isoformat()}
+        await db.nodes.update_one({"_id": node["_id"]}, {"$set": {"lastStart": last_start, "updatedAt": datetime.utcnow()}})
+        return {"running": True, "pid": pid, "lastStart": last_start}
+    except ForbiddenExtraFlagsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except ssh_mod.SshError as exc:
+        raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+
+
+@router.post("/nodes/{node_id}/engine/stop")
+async def stop_engine(node_id: str):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    try:
+        await ssh_mod.run_command(node, LlamaCppEngine.stop_command(), timeout=20)
+        return {"running": False, "pid": None, "lastStart": node.get("lastStart")}
+    except ssh_mod.SshError as exc:
+        raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+
+
+@router.post("/nodes/{node_id}/engine/restart")
+async def restart_engine(node_id: str):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    last = node.get("lastStart") or {}
+    filename = last.get("modelFilename")
+    if not filename:
+        raise HTTPException(status_code=400, detail="No previous start")
+    await stop_engine(node_id)
+    return await start_engine(node_id, StartEngineIn(modelFilename=filename))
