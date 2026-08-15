@@ -1,0 +1,12 @@
+# Mongo only in v1. API and UI run on the host so SSH to LAN Macs is straightforward.
+services:
+  mongo:
+    image: mongo:7
+    container_name: platformai-mongodb
+    ports:
+      - "27091:27017"
+    volumes:
+      - platformai-mongo-data:/data/db
+
+volumes:
+  platformai-mongo-data:
