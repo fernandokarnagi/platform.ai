@@ -61,3 +61,16 @@ async def test_test_ssh_failure(app, monkeypatch):
         response = await client.post(f"/nodes/{node['id']}/test-ssh")
         assert response.status_code == 502
         assert response.json()["detail"].startswith("SSH failed:")
+
+
+@pytest.mark.asyncio
+async def test_run_command_bad_private_key_is_ssh_error():
+    node = {
+        "host": "127.0.0.1",
+        "sshUser": "x",
+        "sshAuthType": "private_key",
+        "sshPrivateKey": "not-a-pem",
+        "sshPassphrase": None,
+    }
+    with pytest.raises(ssh_mod.SshError):
+        await ssh_mod.run_command(node, "uname -s")

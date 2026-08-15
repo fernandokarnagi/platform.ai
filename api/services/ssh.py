@@ -24,14 +24,14 @@ async def run_command(node: dict, command: str, timeout: float = 30.0) -> SshRes
         "known_hosts": None,
         "connect_timeout": 10,
     }
-    if node.get("sshAuthType") == "private_key":
-        connect_kwargs["client_keys"] = [asyncssh.import_private_key(
-            node.get("sshPrivateKey") or "",
-            passphrase=node.get("sshPassphrase") or None,
-        )]
-    else:
-        connect_kwargs["password"] = node.get("sshPassword") or ""
     try:
+        if node.get("sshAuthType") == "private_key":
+            connect_kwargs["client_keys"] = [asyncssh.import_private_key(
+                node.get("sshPrivateKey") or "",
+                passphrase=node.get("sshPassphrase") or None,
+            )]
+        else:
+            connect_kwargs["password"] = node.get("sshPassword") or ""
         async with asyncssh.connect(**connect_kwargs) as conn:
             result = await conn.run(command, check=False, timeout=timeout)
     except Exception as exc:
