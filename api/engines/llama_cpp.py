@@ -86,6 +86,16 @@ class LlamaCppEngine:
         return argv
 
     @staticmethod
+    def probe_command() -> str:
+        return (
+            "uname -s; "
+            "if command -v llama-server >/dev/null 2>&1; then command -v llama-server; "
+            "elif [ -x \"$(brew --prefix 2>/dev/null)/bin/llama-server\" ]; then echo \"$(brew --prefix)/bin/llama-server\"; "
+            "elif [ -x /usr/local/bin/llama-server ]; then echo /usr/local/bin/llama-server; "
+            "else echo MISSING; fi"
+        )
+
+    @staticmethod
     def preview_command(node: dict, model_filename: str = "$MODEL") -> str:
         model_dir = node.get("modelDir") or "~/models"
         argv = LlamaCppEngine.build_argv(node, model_filename, model_dir)

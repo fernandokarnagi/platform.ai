@@ -1,9 +1,11 @@
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from api.database import get_database
+from api.engines.llama_cpp import LlamaCppEngine
 from api.helpers import node_helper, parse_object_id
 from api.logger import get_logger
 from api.models.models import NodeIn, NodeUpdate
+from api.services import ssh as ssh_mod
 
 router = APIRouter(tags=["nodes"])
 logger = get_logger(__name__)
@@ -79,3 +81,19 @@ async def delete_node(node_id: str):
     doc = await _require_node(db, node_id)
     await db.nodes.delete_one({"_id": doc["_id"]})
     return None
+
+
+@router.post("/nodes/{node_id}/test-ssh")
+async def test_ssh(node_id: str):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    try:
+        result = await ssh_mod.run_command(node, LlamaCppEngine.probe_command())
+    except ssh_mod.SshError as exc:
+        raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    uname = lines[0] if lines else ""
+    binary = lines[1] if len(lines) > 1 else "MISSING"
+    if result.exit_status != 0:
+        raise HTTPException(status_code=502, detail=f"SSH failed: {result.stderr or result.stdout}")
+    return {"ok": True, "uname": uname, "llamaServer": binary}
