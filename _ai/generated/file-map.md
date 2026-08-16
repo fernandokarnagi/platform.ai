@@ -1,0 +1,81 @@
+---
+title: Generated file map
+tags: [generated]
+updated: 2026-08-16
+---
+
+# Generated file map
+
+Written by `scripts/update-brain.sh` on 2026-08-16. Do not edit.
+
+- `AGENTS.md`
+- `CLAUDE.md`
+- `README.md`
+- `_ai/00-index.md`
+- `_ai/README.md`
+- `_ai/api.md`
+- `_ai/architecture.md`
+- `_ai/data-model.md`
+- `_ai/decisions.md`
+- `_ai/llama-cpp-engine.md`
+- `_ai/local-vs-ssh.md`
+- `_ai/runbook.md`
+- `_ai/ui.md`
+- `api/.pytest_cache/README.md`
+- `api/__init__.py`
+- `api/config.py`
+- `api/database.py`
+- `api/engines/__init__.py`
+- `api/engines/base.py`
+- `api/engines/llama_cpp.py`
+- `api/helpers.py`
+- `api/logger.py`
+- `api/main.py`
+- `api/models/__init__.py`
+- `api/models/models.py`
+- `api/routes/__init__.py`
+- `api/routes/clusters.py`
+- `api/routes/engines.py`
+- `api/routes/nodes.py`
+- `api/services/__init__.py`
+- `api/services/engine.py`
+- `api/services/openai_proxy.py`
+- `api/services/ssh.py`
+- `api/tests/__init__.py`
+- `api/tests/conftest.py`
+- `api/tests/test_clusters.py`
+- `api/tests/test_engine_lifecycle.py`
+- `api/tests/test_health.py`
+- `api/tests/test_helpers.py`
+- `api/tests/test_llama_cpp_argv.py`
+- `api/tests/test_models_ops.py`
+- `api/tests/test_nodes.py`
+- `api/tests/test_openai_proxy.py`
+- `api/tests/test_ssh.py`
+- `docker-compose.yml`
+- `docs/superpowers/plans/2026-08-15-platformai-control-plane.md`
+- `docs/superpowers/specs/2026-08-15-platformai-control-plane-design.md`
+- `scripts/update-brain.sh`
+- `start.sh`
+- `stop.sh`
+- `ui/components/ErrorBanner.tsx`
+- `ui/components/InfoTip.tsx`
+- `ui/components/ServerParamsFields.tsx`
+- `ui/components/SetupInstructions.tsx`
+- `ui/components/Sidebar.tsx`
+- `ui/components/StatusIcon.tsx`
+- `ui/contexts/ClusterContext.tsx`
+- `ui/index.css`
+- `ui/index.tsx`
+- `ui/lib/format.ts`
+- `ui/routes/index.tsx`
+- `ui/screens/App.tsx`
+- `ui/screens/ClusterDetailScreen.tsx`
+- `ui/screens/ClustersScreen.tsx`
+- `ui/screens/NodeDetailScreen.tsx`
+- `ui/screens/NodeFormScreen.tsx`
+- `ui/services/clusterService.ts`
+- `ui/services/nodeService.ts`
+- `ui/types.ts`
+- `ui/vite-env.d.ts`
+- `ui/vite.config.ts`

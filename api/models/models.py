@@ -10,6 +10,12 @@ class EngineType(str, Enum):
 class SshAuthType(str, Enum):
     PASSWORD = "password"
     PRIVATE_KEY = "private_key"
+    NONE = "none"
+
+
+class NodeType(str, Enum):
+    LOCAL = "local"
+    REMOTE = "remote"
 
 
 class FlashAttn(str, Enum):
@@ -82,10 +88,11 @@ class ClusterUpdate(BaseModel):
 class NodeIn(BaseModel):
     """Payload to register a node."""
     name: str
-    host: str
+    nodeType: Optional[NodeType] = None
+    host: str = ""
     sshPort: int = 22
-    sshUser: str
-    sshAuthType: SshAuthType
+    sshUser: str = ""
+    sshAuthType: SshAuthType = SshAuthType.PASSWORD
     sshPassword: str = ""
     sshPrivateKey: str = ""
     sshPassphrase: str = ""
@@ -101,6 +108,7 @@ class NodeIn(BaseModel):
 class NodeUpdate(BaseModel):
     """Payload to update a node."""
     name: Optional[str] = None
+    nodeType: Optional[NodeType] = None
     host: Optional[str] = None
     sshPort: Optional[int] = None
     sshUser: Optional[str] = None
@@ -143,6 +151,7 @@ class ChatIn(BaseModel):
     messages: List[ChatMessage]
     temperature: Optional[float] = None
     topP: Optional[float] = None
+    topK: Optional[int] = None
     maxTokens: Optional[int] = None
 
 

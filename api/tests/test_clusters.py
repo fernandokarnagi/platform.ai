@@ -15,9 +15,37 @@ async def test_create_and_list_cluster(app):
         assert body["name"] == "desk-macs"
         assert body["engine"] == "llama.cpp"
         assert body["nodeCount"] == 0
+        assert body["runningCount"] == 0
+        assert body["stoppedCount"] == 0
         listed = await client.get("/clusters")
         assert listed.status_code == 200
         assert len(listed.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_cluster_reports_stopped_nodes(app, monkeypatch):
+    async def fake_running(node):
+        return False
+
+    monkeypatch.setattr("api.routes.clusters.engine_mod.is_running", fake_running)
+    async with await _client(app) as client:
+        created = await client.post("/clusters", json={"name": "desk-macs"})
+        cluster_id = created.json()["id"]
+        registered = await client.post(
+            f"/clusters/{cluster_id}/nodes",
+            json={
+                "name": "this-mac",
+                "nodeType": "local",
+                "openaiBaseUrl": "http://127.0.0.1:8080/v1",
+            },
+        )
+        assert registered.status_code == 201
+        listed = await client.get("/clusters")
+        assert listed.status_code == 200
+        row = listed.json()[0]
+        assert row["nodeCount"] == 1
+        assert row["runningCount"] == 0
+        assert row["stoppedCount"] == 1
 
 
 @pytest.mark.asyncio
@@ -65,3 +93,27 @@ async def test_delete_cluster_with_nodes_conflict(app):
         deleted = await client.delete(f"/clusters/{cluster_id}")
         assert deleted.status_code == 409
         assert deleted.json()["detail"] == "Cluster has nodes"
+
+
+@pytest.mark.asyncio
+async def test_delete_cluster_cascade_removes_nodes(app):
+    async with await _client(app) as client:
+        created = await client.post("/clusters", json={"name": "desk-macs"})
+        cluster_id = created.json()["id"]
+        registered = await client.post(
+            f"/clusters/{cluster_id}/nodes",
+            json={
+                "name": "mac-1",
+                "host": "192.168.1.10",
+                "sshUser": "fernando",
+                "sshAuthType": "password",
+                "sshPassword": "secret",
+                "openaiBaseUrl": "http://192.168.1.10:8080/v1",
+            },
+        )
+        assert registered.status_code == 201
+        node_id = registered.json()["id"]
+        deleted = await client.delete(f"/clusters/{cluster_id}?cascade=true")
+        assert deleted.status_code == 204
+        assert (await client.get(f"/clusters/{cluster_id}")).status_code == 404
+        assert (await client.get(f"/nodes/{node_id}")).status_code == 404

@@ -1,6 +1,8 @@
 export type EngineType = 'llama.cpp';
 
-export type SshAuthType = 'password' | 'private_key';
+export type SshAuthType = 'password' | 'private_key' | 'none';
+
+export type NodeType = 'local' | 'remote';
 
 export type FlashAttn = 'auto' | 'on' | 'off';
 
@@ -52,6 +54,8 @@ export interface Cluster {
   engine: EngineType | string;
   description: string;
   nodeCount: number;
+  runningCount: number;
+  stoppedCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -78,6 +82,7 @@ export interface Node {
   id: string;
   clusterId: string;
   name: string;
+  nodeType: NodeType;
   host: string;
   sshPort: number;
   sshUser: string;
@@ -93,16 +98,25 @@ export interface Node {
   modelDir: string;
   serverParams: ServerParams;
   lastStart: LastStart | null;
+  lastOpenAICheck: LastOpenAICheck | null;
   createdAt: string;
   updatedAt: string;
 }
 
+export interface LastOpenAICheck {
+  openai: 'up' | 'down';
+  checkedAt: string;
+  models: string[];
+  detail?: string | null;
+}
+
 export interface NodeIn {
   name: string;
-  host: string;
+  nodeType: NodeType;
+  host?: string;
   sshPort?: number;
-  sshUser: string;
-  sshAuthType: SshAuthType;
+  sshUser?: string;
+  sshAuthType?: SshAuthType;
   sshPassword?: string;
   sshPrivateKey?: string;
   sshPassphrase?: string;
@@ -117,6 +131,7 @@ export interface NodeIn {
 
 export interface NodeUpdate {
   name?: string;
+  nodeType?: NodeType;
   host?: string;
   sshPort?: number;
   sshUser?: string;
@@ -138,6 +153,7 @@ export interface NodeStatus {
   openai: 'up' | 'down';
   models: string[];
   detail: string | null;
+  checkedAt?: string | null;
 }
 
 export interface EngineStatus {
@@ -163,6 +179,7 @@ export interface ChatIn {
   messages: ChatMessage[];
   temperature?: number;
   topP?: number;
+  topK?: number;
   maxTokens?: number;
 }
 
@@ -203,6 +220,7 @@ export interface PreviewOut {
 
 export interface TestSshResult {
   ok: boolean;
+  local?: boolean;
   uname: string;
   llamaServer: string;
 }

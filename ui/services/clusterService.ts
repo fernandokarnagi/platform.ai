@@ -65,7 +65,8 @@ export const clusterService = {
     });
   },
 
-  remove(id: string): Promise<void> {
-    return api<void>(`/clusters/${id}`, { method: 'DELETE' });
+  remove(id: string, options?: { cascade?: boolean }): Promise<void> {
+    const suffix = options?.cascade ? '?cascade=true' : '';
+    return api<void>(`/clusters/${id}${suffix}`, { method: 'DELETE' });
   },
 };

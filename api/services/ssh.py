@@ -1,5 +1,7 @@
 from dataclasses import dataclass
+import asyncio
 import asyncssh
+from api.helpers import is_local_node
 from api.logger import get_logger
 
 logger = get_logger(__name__)
@@ -16,7 +18,29 @@ class SshResult:
     exit_status: int
 
 
+async def _run_local(command: str, timeout: float) -> SshResult:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "/bin/bash",
+            "-lc",
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except Exception as exc:
+        raise SshError(str(exc)) from exc
+    return SshResult(
+        stdout=(stdout or b"").decode(errors="replace"),
+        stderr=(stderr or b"").decode(errors="replace"),
+        exit_status=int(proc.returncode or 0),
+    )
+
+
 async def run_command(node: dict, command: str, timeout: float = 30.0) -> SshResult:
+    if is_local_node(node):
+        return await _run_local(command, timeout)
+
     connect_kwargs = {
         "host": node["host"],
         "port": int(node.get("sshPort") or 22),

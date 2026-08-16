@@ -31,6 +31,19 @@ async def test_register_list_get_node(app):
 
 
 @pytest.mark.asyncio
+async def test_delete_node(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cluster = (await client.post("/clusters", json={"name": "desk-macs"})).json()
+        created = await client.post(f"/clusters/{cluster['id']}/nodes", json=_node_payload())
+        node_id = created.json()["id"]
+        deleted = await client.delete(f"/nodes/{node_id}")
+        assert deleted.status_code == 204
+        assert (await client.get(f"/nodes/{node_id}")).status_code == 404
+        listed = await client.get(f"/clusters/{cluster['id']}/nodes")
+        assert listed.json() == []
+
+
+@pytest.mark.asyncio
 async def test_delete_cluster_blocked_when_nodes_exist(app):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         cluster = (await client.post("/clusters", json={"name": "desk-macs"})).json()

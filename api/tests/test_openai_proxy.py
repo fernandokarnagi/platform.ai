@@ -27,6 +27,7 @@ async def test_status_up_and_chat(app, monkeypatch):
 
     async def fake_chat(base_url, api_key, payload):
         assert payload["stream"] is False
+        assert payload.get("top_k") == 40
         return {"choices": [{"message": {"role": "assistant", "content": "hi"}}]}
 
     monkeypatch.setattr(ssh_mod, "run_command", fake_ssh)
@@ -52,7 +53,7 @@ async def test_status_up_and_chat(app, monkeypatch):
         assert status.json()["models"] == ["phi"]
         chat = await client.post(
             f"/nodes/{node['id']}/chat",
-            json={"model": "phi", "messages": [{"role": "user", "content": "hi"}]},
+            json={"model": "phi", "messages": [{"role": "user", "content": "hi"}], "topK": 40},
         )
         assert chat.status_code == 200
         assert chat.json()["choices"][0]["message"]["content"] == "hi"

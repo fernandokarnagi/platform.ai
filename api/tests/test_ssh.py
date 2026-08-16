@@ -51,11 +51,11 @@ async def test_test_ssh_failure(app, monkeypatch):
             f"/clusters/{cluster['id']}/nodes",
             json={
                 "name": "mac-1",
-                "host": "127.0.0.1",
+                "host": "192.168.1.10",
                 "sshUser": "x",
                 "sshAuthType": "password",
                 "sshPassword": "bad",
-                "openaiBaseUrl": "http://127.0.0.1:8080/v1",
+                "openaiBaseUrl": "http://192.168.1.10:8080/v1",
             },
         )).json()
         response = await client.post(f"/nodes/{node['id']}/test-ssh")
@@ -66,7 +66,7 @@ async def test_test_ssh_failure(app, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_command_bad_private_key_is_ssh_error():
     node = {
-        "host": "127.0.0.1",
+        "host": "192.168.1.10",
         "sshUser": "x",
         "sshAuthType": "private_key",
         "sshPrivateKey": "not-a-pem",
@@ -74,3 +74,65 @@ async def test_run_command_bad_private_key_is_ssh_error():
     }
     with pytest.raises(ssh_mod.SshError):
         await ssh_mod.run_command(node, "uname -s")
+
+
+@pytest.mark.asyncio
+async def test_run_command_localhost_skips_ssh():
+    result = await ssh_mod.run_command({"nodeType": "local"}, "echo platformai-local")
+    assert result.exit_status == 0
+    assert "platformai-local" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_create_localhost_node_without_ssh(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cluster = (await client.post("/clusters", json={"name": "local"})).json()
+        created = await client.post(
+            f"/clusters/{cluster['id']}/nodes",
+            json={
+                "name": "this-mac",
+                "nodeType": "local",
+                "openaiBaseUrl": "http://127.0.0.1:8080/v1",
+            },
+        )
+        assert created.status_code == 201
+        body = created.json()
+        assert body["nodeType"] == "local"
+        assert body["host"] == "localhost"
+        assert body["sshAuthType"] == "none"
+        assert body["sshUser"] == ""
+
+
+@pytest.mark.asyncio
+async def test_remote_node_requires_host(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cluster = (await client.post("/clusters", json={"name": "needs-host"})).json()
+        created = await client.post(
+            f"/clusters/{cluster['id']}/nodes",
+            json={
+                "name": "box",
+                "nodeType": "remote",
+                "sshUser": "fernando",
+                "sshAuthType": "password",
+                "sshPassword": "secret",
+                "openaiBaseUrl": "http://192.168.1.10:8080/v1",
+            },
+        )
+        assert created.status_code == 400
+        assert "Host" in created.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_remote_node_requires_ssh_user(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cluster = (await client.post("/clusters", json={"name": "remote"})).json()
+        created = await client.post(
+            f"/clusters/{cluster['id']}/nodes",
+            json={
+                "name": "box",
+                "host": "192.168.1.10",
+                "openaiBaseUrl": "http://192.168.1.10:8080/v1",
+            },
+        )
+        assert created.status_code == 400
+        assert "SSH" in created.json()["detail"]

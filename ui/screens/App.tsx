@@ -5,9 +5,9 @@ import { ClusterProvider } from '@contexts/ClusterContext';
 export default function App() {
   return (
     <ClusterProvider>
-      <div className="flex min-h-screen">
+      <div>
         <Sidebar />
-        <main className="min-h-screen flex-1 bg-slate-50">
+        <main>
           <Outlet />
         </main>
       </div>

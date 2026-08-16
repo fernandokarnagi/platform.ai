@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import ErrorBanner from '@components/ErrorBanner';
+import StatusIcon from '@components/StatusIcon';
+import { useClusters } from '@contexts/ClusterContext';
+import { formatDateTime, formatFileTime } from '@/lib/format';
 import { nodeService } from '@services/nodeService';
 import type {
   ChatIn,
@@ -12,31 +15,27 @@ import type {
   RemoteModel,
 } from '@/types';
 
-const inputClass =
-  'w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
+const inputClass = 'field-input';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function Badge({ ok, on, off }: { ok: boolean; on: string; off: string }) {
+function Section({
+  title,
+  actions,
+  children,
+  className,
+}: {
+  title: string;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <span
-      className={[
-        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-        ok ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600',
-      ].join(' ')}
-    >
-      {ok ? on : off}
-    </span>
-  );
-}
-
-function Section({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
+    <section className={`card space-y-4${className ? ` ${className}` : ''}`}>
+      <div className="card-head">
+        <h2 className="card-title">{title}</h2>
         {actions}
       </div>
       {children}
@@ -54,21 +53,15 @@ function Modal({
   onClose: () => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md rounded-lg bg-white shadow-xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
-          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <span>{title}</span>
+          <button type="button" onClick={onClose} className="modal-x">
             ✕
           </button>
         </div>
-        <div className="p-5">{children}</div>
+        {children}
       </div>
     </div>
   );
@@ -83,10 +76,7 @@ function formatBytes(n: number): string {
 }
 
 function formatStamp(iso: string): string {
-  if (!iso) return '—';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString();
+  return formatDateTime(iso);
 }
 
 function parseOptionalNumber(raw: string, label: string): { ok: true; value?: number } | { ok: false; error: string } {
@@ -119,6 +109,8 @@ function sleep(ms: number): Promise<void> {
 
 export default function NodeDetailScreen() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { refresh } = useClusters();
 
   const [node, setNode] = useState<Node | null>(null);
   const [status, setStatus] = useState<NodeStatus | null>(null);
@@ -128,7 +120,9 @@ export default function NodeDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [busy, setBusy] = useState<'start' | 'stop' | 'restart' | 'download' | 'delete' | 'chat' | null>(null);
+  const [busy, setBusy] = useState<
+    'start' | 'stop' | 'restart' | 'download' | 'delete' | 'delete-node' | 'chat' | null
+  >(null);
 
   const [startOpen, setStartOpen] = useState(false);
   const [startFilename, setStartFilename] = useState('');
@@ -146,6 +140,7 @@ export default function NodeDetailScreen() {
   const [draft, setDraft] = useState('');
   const [temperature, setTemperature] = useState('');
   const [topP, setTopP] = useState('');
+  const [topK, setTopK] = useState('');
   const [maxTokens, setMaxTokens] = useState('');
 
   const applyStatus = useCallback((next: NodeStatus) => {
@@ -357,6 +352,21 @@ export default function NodeDetailScreen() {
     }
   }
 
+  async function handleDeleteNode() {
+    if (!id || !node) return;
+    if (!window.confirm(`Delete node "${node.name}"?`)) return;
+    setBusy('delete-node');
+    setError(null);
+    try {
+      await nodeService.remove(id);
+      await refresh();
+      navigate(node.clusterId ? `/clusters/${node.clusterId}` : '/');
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(null);
+    }
+  }
+
   async function handleDelete(filename: string) {
     if (!id) return;
     if (!window.confirm(`Delete model "${filename}" from this node?`)) return;
@@ -383,6 +393,7 @@ export default function NodeDetailScreen() {
     }
     const temp = parseOptionalNumber(temperature, 'temperature');
     const p = parseOptionalNumber(topP, 'topP');
+    const k = parseOptionalInt(topK, 'topK');
     const tokens = parseOptionalInt(maxTokens, 'maxTokens');
     if (!temp.ok) {
       setError(temp.error);
@@ -390,6 +401,10 @@ export default function NodeDetailScreen() {
     }
     if (!p.ok) {
       setError(p.error);
+      return;
+    }
+    if (!k.ok) {
+      setError(k.error);
       return;
     }
     if (!tokens.ok) {
@@ -403,6 +418,7 @@ export default function NodeDetailScreen() {
     const payload: ChatIn = { model: chatModel, messages: nextMessages };
     if (temp.value !== undefined) payload.temperature = temp.value;
     if (p.value !== undefined) payload.topP = p.value;
+    if (k.value !== undefined) payload.topK = k.value;
     if (tokens.value !== undefined) payload.maxTokens = tokens.value;
 
     setMessages(nextMessages);
@@ -426,34 +442,45 @@ export default function NodeDetailScreen() {
   const served = status?.models ?? [];
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-8">
+    <div className="page page-wide space-y-5">
       <div>
-        <Link to={backTo} className="text-sm text-blue-600 hover:underline">
+        <Link to={backTo} className="back">
           ← {node ? 'Cluster' : 'Clusters'}
         </Link>
-        <div className="mt-3 flex items-start justify-between gap-4">
+        <div className="page-head mt-3">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900">{node?.name ?? 'Node'}</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              {node ? `${node.host}:${node.sshPort} · ${node.listenHost}:${node.listenPort}` : ' '}
+            <h1>{node?.name ?? 'Node'}</h1>
+            <p className="page-sub">
+              {node
+                ? node.nodeType === 'local'
+                  ? `localhost · ${node.listenHost}:${node.listenPort}`
+                  : `${node.host}:${node.sshPort} · ${node.listenHost}:${node.listenPort}`
+                : ' '}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="page-actions">
             <button
               type="button"
               onClick={() => void load('refresh')}
               disabled={loading || refreshing}
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60"
+              className="toggle"
             >
               {refreshing ? 'Refreshing…' : 'Refresh'}
             </button>
             {id ? (
-              <Link
-                to={`/nodes/${id}/edit`}
-                className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-              >
+              <Link to={`/nodes/${id}/edit`} className="toggle accent">
                 Edit node
               </Link>
+            ) : null}
+            {id && node ? (
+              <button
+                type="button"
+                className="toggle danger"
+                disabled={busy === 'delete-node'}
+                onClick={() => void handleDeleteNode()}
+              >
+                {busy === 'delete-node' ? 'Deleting…' : 'Delete node'}
+              </button>
             ) : null}
           </div>
         </div>
@@ -461,227 +488,212 @@ export default function NodeDetailScreen() {
 
       {error ? <ErrorBanner message={error} /> : null}
 
-      {loading ? <p className="text-sm text-slate-500">Loading…</p> : null}
+      {loading ? <p className="muted">Loading…</p> : null}
 
       {!loading ? (
-        <>
-          <Section title="Status">
-            <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">SSH</dt>
-                <dd className="mt-1">
-                  {status ? <Badge ok={status.ssh === 'up'} on="up" off="down" /> : <span className="text-slate-400">—</span>}
-                </dd>
+        <div className="node-layout">
+          <Section title="Chat" className="node-chat">
+            <form className="chat-compose" onSubmit={(event) => void handleChat(event)}>
+              <div className="chat-params">
+                <label className="chat-model">
+                  <span className="field-label">Model</span>
+                  <select
+                    value={chatModel}
+                    onChange={(event) => setChatModel(event.target.value)}
+                    className={inputClass}
+                    disabled={served.length === 0}
+                  >
+                    {served.length === 0 ? <option value="">No served models</option> : null}
+                    {served.map((modelId) => (
+                      <option key={modelId} value={modelId}>
+                        {modelId}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span className="field-label">Temp</span>
+                  <input
+                    value={temperature}
+                    onChange={(event) => setTemperature(event.target.value)}
+                    className={inputClass}
+                    placeholder="opt"
+                  />
+                </label>
+                <label>
+                  <span className="field-label">topP</span>
+                  <input
+                    value={topP}
+                    onChange={(event) => setTopP(event.target.value)}
+                    className={inputClass}
+                    placeholder="opt"
+                  />
+                </label>
+                <label>
+                  <span className="field-label">topK</span>
+                  <input
+                    value={topK}
+                    onChange={(event) => setTopK(event.target.value)}
+                    className={inputClass}
+                    placeholder="opt"
+                  />
+                </label>
+                <label>
+                  <span className="field-label">maxTokens</span>
+                  <input
+                    value={maxTokens}
+                    onChange={(event) => setMaxTokens(event.target.value)}
+                    className={inputClass}
+                    placeholder="opt"
+                  />
+                </label>
               </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">Engine</dt>
-                <dd className="mt-1 flex flex-wrap items-center gap-2">
-                  {engine ? <Badge ok={engine.running} on="running" off="stopped" /> : <span className="text-slate-400">—</span>}
-                  <span className="text-sm text-slate-600">pid {engine?.pid ?? '—'}</span>
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">OpenAI</dt>
-                <dd className="mt-1">
-                  {status ? (
-                    <Badge ok={status.openai === 'up'} on="up" off="down" />
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">Served models</dt>
-                <dd className="mt-1 text-sm text-slate-800">{served.length ? served.join(', ') : '—'}</dd>
-              </div>
-            </dl>
-          </Section>
-
-          <Section
-            title="Engine"
-            actions={
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => void openStart()}
-                  disabled={running || busy !== null}
-                  className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-                >
-                  Start
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleStop()}
-                  disabled={!running || busy !== null}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
-                >
-                  {busy === 'stop' ? 'Stopping…' : 'Stop'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleRestart()}
-                  disabled={busy !== null}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-60"
-                >
-                  {busy === 'restart' ? 'Restarting…' : 'Restart'}
-                </button>
-              </div>
-            }
-          >
-            {engine?.lastStart ? (
-              <p className="text-sm text-slate-600">
-                Last start {engine.lastStart.modelFilename}
-                {engine.lastStart.startedAt ? ` · ${formatStamp(engine.lastStart.startedAt)}` : ''}
-              </p>
-            ) : (
-              <p className="text-sm text-slate-500">No previous start. Pick a GGUF to launch llama-server.</p>
-            )}
-          </Section>
-
-          <Section
-            title="Models"
-            actions={
-              <button
-                type="button"
-                onClick={openDownload}
-                disabled={busy !== null}
-                className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-              >
-                Download
-              </button>
-            }
-          >
-            <div className="overflow-hidden rounded-md border border-slate-200">
-              <table className="min-w-full text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">File</th>
-                    <th className="px-4 py-3 font-medium">Size</th>
-                    <th className="px-4 py-3 font-medium">Modified</th>
-                    <th className="px-4 py-3 font-medium text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {models.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
-                        No GGUF files in {node?.modelDir ?? '~/models'}.
-                      </td>
-                    </tr>
-                  ) : (
-                    models.map((model) => (
-                      <tr key={model.name} className="border-t border-slate-100">
-                        <td className="px-4 py-3 font-medium text-slate-900">{model.name}</td>
-                        <td className="px-4 py-3 text-slate-600">{formatBytes(model.sizeBytes)}</td>
-                        <td className="px-4 py-3 text-slate-600">{formatStamp(model.mtime)}</td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            disabled={busy !== null}
-                            className="rounded px-2 py-1 text-red-700 hover:bg-red-50 disabled:opacity-60"
-                            onClick={() => void handleDelete(model.name)}
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Section>
-
-          <Section title="Chat">
-            <div className="grid gap-4 sm:grid-cols-4">
-              <label className="block text-sm sm:col-span-2">
-                <span className="mb-1 block font-medium text-slate-700">Model</span>
-                <select
-                  value={chatModel}
-                  onChange={(event) => setChatModel(event.target.value)}
-                  className={inputClass}
-                  disabled={served.length === 0}
-                >
-                  {served.length === 0 ? <option value="">No served models</option> : null}
-                  {served.map((modelId) => (
-                    <option key={modelId} value={modelId}>
-                      {modelId}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block font-medium text-slate-700">Temperature</span>
-                <input
-                  value={temperature}
-                  onChange={(event) => setTemperature(event.target.value)}
-                  className={inputClass}
-                  placeholder="optional"
+              <div className="chat-input">
+                <textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  rows={2}
+                  className={`${inputClass} flex-1`}
+                  placeholder="Message"
                 />
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block font-medium text-slate-700">topP</span>
-                <input
-                  value={topP}
-                  onChange={(event) => setTopP(event.target.value)}
-                  className={inputClass}
-                  placeholder="optional"
-                />
-              </label>
-              <label className="block text-sm sm:col-span-2">
-                <span className="mb-1 block font-medium text-slate-700">maxTokens</span>
-                <input
-                  value={maxTokens}
-                  onChange={(event) => setMaxTokens(event.target.value)}
-                  className={inputClass}
-                  placeholder="optional"
-                />
-              </label>
-            </div>
-
-            <div className="min-h-48 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-4">
+                <button
+                  type="submit"
+                  disabled={busy !== null || !chatModel || !draft.trim()}
+                  className="toggle accent"
+                >
+                  {busy === 'chat' ? 'Sending…' : 'Send'}
+                </button>
+              </div>
+            </form>
+            <hr className="chat-rule" />
+            <div className="chat-log">
               {messages.length === 0 ? (
-                <p className="text-sm text-slate-500">No messages yet. Send a turn after the engine is up.</p>
+                <p className="muted">No messages yet. Send a turn after the engine is up.</p>
               ) : (
                 messages.map((message, index) => (
-                  <div
-                    key={`${message.role}-${index}`}
-                    className={message.role === 'user' ? 'text-right' : 'text-left'}
-                  >
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{message.role}</p>
-                    <p className="mt-1 inline-block max-w-full whitespace-pre-wrap rounded-md bg-white px-3 py-2 text-sm text-slate-800 shadow-sm">
-                      {message.content}
-                    </p>
+                  <div key={`${message.role}-${index}`} className={`event ${message.role}`}>
+                    <div className="kind">{message.role}</div>
+                    <div className="body">{message.content}</div>
                   </div>
                 ))
               )}
             </div>
-
-            <form className="flex flex-col gap-3 sm:flex-row" onSubmit={(event) => void handleChat(event)}>
-              <textarea
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                rows={2}
-                className={`${inputClass} flex-1`}
-                placeholder="Message"
-              />
-              <button
-                type="submit"
-                disabled={busy !== null || !chatModel || !draft.trim()}
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-              >
-                {busy === 'chat' ? 'Sending…' : 'Send'}
-              </button>
-            </form>
           </Section>
-        </>
+
+          <div className="node-side">
+            <Section
+              title="Status"
+              actions={
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void openStart()}
+                    disabled={running || busy !== null}
+                    className="toggle accent"
+                  >
+                    Start
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleStop()}
+                    disabled={!running || busy !== null}
+                    className="toggle"
+                  >
+                    {busy === 'stop' ? 'Stopping…' : 'Stop'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRestart()}
+                    disabled={busy !== null}
+                    className="toggle"
+                  >
+                    {busy === 'restart' ? 'Restarting…' : 'Restart'}
+                  </button>
+                </div>
+              }
+            >
+              <dl className="stat-grid stat-grid-side">
+                <div>
+                  <dt className="stat-label">{node?.nodeType === 'local' ? 'Local' : 'SSH'}</dt>
+                  <dd className="stat-value">
+                    {status ? <StatusIcon kind={status.ssh === 'up' ? 'up' : 'down'} /> : <span className="muted">—</span>}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="stat-label">Engine</dt>
+                  <dd className="stat-value flex flex-wrap items-center gap-2">
+                    {engine ? <StatusIcon kind={engine.running ? 'running' : 'stopped'} /> : <span className="muted">—</span>}
+                    <span className="muted">pid {engine?.pid ?? '—'}</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="stat-label">OpenAI</dt>
+                  <dd className="stat-value">
+                    {status ? <StatusIcon kind={status.openai === 'up' ? 'up' : 'down'} /> : <span className="muted">—</span>}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="stat-label">Served models</dt>
+                  <dd className="stat-value">{served.length ? served.join(', ') : '—'}</dd>
+                </div>
+              </dl>
+              {engine?.lastStart ? (
+                <p className="muted">
+                  Last start {engine.lastStart.modelFilename}
+                  {engine.lastStart.startedAt ? ` · ${formatStamp(engine.lastStart.startedAt)}` : ''}
+                </p>
+              ) : (
+                <p className="muted">No previous start. Pick a GGUF to launch llama-server.</p>
+              )}
+            </Section>
+
+            <Section
+              title="Models"
+              actions={
+                <button
+                  type="button"
+                  onClick={openDownload}
+                  disabled={busy !== null}
+                  className="toggle accent"
+                >
+                  Download
+                </button>
+              }
+            >
+              {models.length === 0 ? (
+                <p className="muted">No GGUF files in {node?.modelDir ?? '~/models'}.</p>
+              ) : (
+                <ul className="model-list">
+                  {models.map((model) => (
+                    <li key={model.name} className="model-row">
+                      <div className="model-meta">
+                        <div className="model-name">{model.name}</div>
+                        <div className="muted">
+                          {formatBytes(model.sizeBytes)} · {formatFileTime(model.mtime)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        className="toggle danger"
+                        onClick={() => void handleDelete(model.name)}
+                      >
+                        Delete
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+          </div>
+        </div>
       ) : null}
 
       {startOpen ? (
         <Modal title="Start llama-server" onClose={() => busy === null && setStartOpen(false)}>
-          <form className="space-y-4" onSubmit={(event) => void handleStart(event)}>
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-slate-700">GGUF</span>
+          <form onSubmit={(event) => void handleStart(event)}>
+            <label>
+              <span className="field-label">GGUF</span>
               <select
                 value={startFilename}
                 onChange={(event) => setStartFilename(event.target.value)}
@@ -697,20 +709,11 @@ export default function NodeDetailScreen() {
                 ))}
               </select>
             </label>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setStartOpen(false)}
-                disabled={busy !== null}
-                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60"
-              >
+            <div className="modal-actions">
+              <button type="button" onClick={() => setStartOpen(false)} disabled={busy !== null} className="toggle">
                 Cancel
               </button>
-              <button
-                type="submit"
-                disabled={busy !== null || !startFilename}
-                className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-              >
+              <button type="submit" disabled={busy !== null || !startFilename} className="toggle accent">
                 {busy === 'start' ? 'Starting…' : 'Start'}
               </button>
             </div>
@@ -720,10 +723,10 @@ export default function NodeDetailScreen() {
 
       {downloadOpen ? (
         <Modal title="Download model" onClose={() => busy === null && setDownloadOpen(false)}>
-          <form className="space-y-4" onSubmit={(event) => void handleDownload(event)}>
+          <form onSubmit={(event) => void handleDownload(event)}>
             <fieldset className="space-y-2">
-              <legend className="mb-1 text-sm font-medium text-slate-700">Source</legend>
-              <label className="mr-4 inline-flex items-center gap-2 text-sm">
+              <legend className="field-label">Source</legend>
+              <label className="mr-4 inline-flex items-center gap-2">
                 <input
                   type="radio"
                   name="download-source"
@@ -732,7 +735,7 @@ export default function NodeDetailScreen() {
                 />
                 Hugging Face
               </label>
-              <label className="inline-flex items-center gap-2 text-sm">
+              <label className="inline-flex items-center gap-2">
                 <input
                   type="radio"
                   name="download-source"
@@ -744,8 +747,8 @@ export default function NodeDetailScreen() {
             </fieldset>
             {downloadSource === 'huggingface' ? (
               <>
-                <label className="block text-sm">
-                  <span className="mb-1 block font-medium text-slate-700">Repo</span>
+                <label>
+                  <span className="field-label">Repo</span>
                   <input
                     value={downloadRepo}
                     onChange={(event) => setDownloadRepo(event.target.value)}
@@ -754,8 +757,8 @@ export default function NodeDetailScreen() {
                     autoFocus
                   />
                 </label>
-                <label className="block text-sm">
-                  <span className="mb-1 block font-medium text-slate-700">Filename</span>
+                <label>
+                  <span className="field-label">Filename</span>
                   <input
                     value={downloadFilename}
                     onChange={(event) => setDownloadFilename(event.target.value)}
@@ -763,8 +766,8 @@ export default function NodeDetailScreen() {
                     placeholder="model.Q4_K_M.gguf"
                   />
                 </label>
-                <label className="block text-sm">
-                  <span className="mb-1 block font-medium text-slate-700">HF token</span>
+                <label>
+                  <span className="field-label">HF token</span>
                   <input
                     type="password"
                     value={downloadToken}
@@ -777,8 +780,8 @@ export default function NodeDetailScreen() {
               </>
             ) : (
               <>
-                <label className="block text-sm">
-                  <span className="mb-1 block font-medium text-slate-700">URL</span>
+                <label>
+                  <span className="field-label">URL</span>
                   <input
                     value={downloadUrl}
                     onChange={(event) => setDownloadUrl(event.target.value)}
@@ -787,8 +790,8 @@ export default function NodeDetailScreen() {
                     autoFocus
                   />
                 </label>
-                <label className="block text-sm">
-                  <span className="mb-1 block font-medium text-slate-700">Filename</span>
+                <label>
+                  <span className="field-label">Filename</span>
                   <input
                     value={downloadFilename}
                     onChange={(event) => setDownloadFilename(event.target.value)}
@@ -798,20 +801,11 @@ export default function NodeDetailScreen() {
                 </label>
               </>
             )}
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setDownloadOpen(false)}
-                disabled={busy !== null}
-                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60"
-              >
+            <div className="modal-actions">
+              <button type="button" onClick={() => setDownloadOpen(false)} disabled={busy !== null} className="toggle">
                 Cancel
               </button>
-              <button
-                type="submit"
-                disabled={busy !== null}
-                className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-              >
+              <button type="submit" disabled={busy !== null} className="toggle accent">
                 {busy === 'download' ? 'Downloading…' : 'Download'}
               </button>
             </div>

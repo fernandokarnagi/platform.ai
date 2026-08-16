@@ -2,9 +2,10 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from api.database import get_database
 from api.engines.llama_cpp import ForbiddenExtraFlagsError, LlamaCppEngine
-from api.helpers import node_helper, parse_object_id, safe_model_filename
+from api.helpers import apply_node_location, is_local_node, node_helper, parse_object_id, safe_model_filename
 from api.logger import get_logger
 from api.models.models import ChatIn, DeleteModelIn, DownloadModelIn, NodeIn, NodeUpdate, StartEngineIn
+from api.services import engine as engine_mod
 from api.services import openai_proxy as openai_proxy
 from api.services import ssh as ssh_mod
 
@@ -44,7 +45,15 @@ async def create_node(cluster_id: str, payload: NodeIn):
     oid = await _require_cluster(db, cluster_id)
     now = datetime.utcnow()
     doc = payload.model_dump()
-    doc["sshAuthType"] = payload.sshAuthType.value
+    if payload.sshAuthType is not None:
+        doc["sshAuthType"] = payload.sshAuthType.value
+    if payload.nodeType is not None:
+        doc["nodeType"] = payload.nodeType.value
+    apply_node_location(
+        doc,
+        payload.nodeType.value if payload.nodeType else None,
+        payload.host,
+    )
     doc["clusterId"] = oid
     doc["lastStart"] = None
     doc["createdAt"] = now
@@ -68,6 +77,22 @@ async def update_node(node_id: str, update: NodeUpdate):
     data = {k: v for k, v in update.model_dump().items() if v is not None}
     if "sshAuthType" in data and hasattr(data["sshAuthType"], "value"):
         data["sshAuthType"] = data["sshAuthType"].value
+    if "nodeType" in data and hasattr(data["nodeType"], "value"):
+        data["nodeType"] = data["nodeType"].value
+    merged = {**doc, **data}
+    apply_node_location(
+        merged,
+        merged.get("nodeType"),
+        merged.get("host"),
+    )
+    data["nodeType"] = merged["nodeType"]
+    data["host"] = merged["host"]
+    data["sshPort"] = merged["sshPort"]
+    data["sshAuthType"] = merged["sshAuthType"]
+    data["sshUser"] = merged["sshUser"]
+    data["sshPassword"] = merged["sshPassword"]
+    data["sshPrivateKey"] = merged["sshPrivateKey"]
+    data["sshPassphrase"] = merged["sshPassphrase"]
     if "serverParams" in data and data["serverParams"] is not None:
         data["serverParams"] = update.serverParams.model_dump()
     data["updatedAt"] = datetime.utcnow()
@@ -88,16 +113,18 @@ async def delete_node(node_id: str):
 async def test_ssh(node_id: str):
     db = get_database()
     node = await _require_node(db, node_id)
+    local = is_local_node(node)
+    label = "Local" if local else "SSH"
     try:
         result = await ssh_mod.run_command(node, LlamaCppEngine.probe_command())
     except ssh_mod.SshError as exc:
-        raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"{label} failed: {exc}") from exc
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     uname = lines[0] if lines else ""
     binary = lines[1] if len(lines) > 1 else "MISSING"
     if result.exit_status != 0:
-        raise HTTPException(status_code=502, detail=f"SSH failed: {result.stderr or result.stdout}")
-    return {"ok": True, "uname": uname, "llamaServer": binary}
+        raise HTTPException(status_code=502, detail=f"{label} failed: {result.stderr or result.stdout}")
+    return {"ok": True, "local": local, "uname": uname, "llamaServer": binary}
 
 
 def _last_line(stdout: str) -> str:
@@ -122,22 +149,12 @@ async def _resolve_binary(node):
     return binary
 
 
-async def _engine_status(node):
-    pid_res = await ssh_mod.run_command(node, LlamaCppEngine.read_pid_command())
-    pid = pid_res.stdout.strip()
-    running = False
-    if pid:
-        alive = await ssh_mod.run_command(node, LlamaCppEngine.pid_alive_command(pid))
-        running = "alive" in alive.stdout
-    return {"running": running, "pid": pid if running else None, "lastStart": node.get("lastStart")}
-
-
 @router.get("/nodes/{node_id}/engine")
 async def get_engine(node_id: str):
     db = get_database()
     node = await _require_node(db, node_id)
     try:
-        status_body = await _engine_status(node)
+        status_body = await engine_mod.engine_status(node)
         try:
             status_body["llamaServer"] = await _resolve_binary(node)
         except HTTPException:
@@ -153,7 +170,7 @@ async def start_engine(node_id: str, payload: StartEngineIn):
     node = await _require_node(db, node_id)
     try:
         filename = safe_model_filename(payload.modelFilename)
-        current = await _engine_status(node)
+        current = await engine_mod.engine_status(node)
         if current["running"]:
             raise HTTPException(status_code=409, detail="Engine already running")
         model_dir = await _expand_dir(node)
@@ -290,19 +307,30 @@ async def delete_model(node_id: str, payload: DeleteModelIn):
 async def node_status(node_id: str):
     db = get_database()
     node = await _require_node(db, node_id)
-    body = {"ssh": "down", "openai": "down", "models": [], "detail": None}
+    body = {"ssh": "down", "openai": "down", "models": [], "detail": None, "checkedAt": None}
     try:
         await ssh_mod.run_command(node, "uname -s")
         body["ssh"] = "up"
     except ssh_mod.SshError as exc:
         body["detail"] = f"SSH failed: {exc}"
-        return body
     try:
         models = await openai_proxy.fetch_models(node.get("openaiBaseUrl") or "", node.get("openaiApiKey") or "")
         body["openai"] = "up"
         body["models"] = [m.get("id") for m in models if m.get("id")]
     except openai_proxy.OpenAIProxyError as exc:
-        body["detail"] = str(exc)
+        body["detail"] = str(exc) if not body["detail"] else f"{body['detail']}; {exc}"
+    now = datetime.utcnow()
+    check = {
+        "openai": body["openai"],
+        "checkedAt": now,
+        "models": body["models"],
+        "detail": body["detail"],
+    }
+    await db.nodes.update_one(
+        {"_id": node["_id"]},
+        {"$set": {"lastOpenAICheck": check, "updatedAt": now}},
+    )
+    body["checkedAt"] = now.isoformat()
     return body
 
 
@@ -330,6 +358,8 @@ async def chat(node_id: str, payload: ChatIn):
         body["temperature"] = payload.temperature
     if payload.topP is not None:
         body["top_p"] = payload.topP
+    if payload.topK is not None:
+        body["top_k"] = payload.topK
     if payload.maxTokens is not None:
         body["max_tokens"] = payload.maxTokens
     try:

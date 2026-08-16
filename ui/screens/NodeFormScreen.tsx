@@ -1,14 +1,14 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useMatch, useNavigate } from 'react-router-dom';
 import ErrorBanner from '@components/ErrorBanner';
+import InfoTip from '@components/InfoTip';
 import ServerParamsFields from '@components/ServerParamsFields';
 import SetupInstructions from '@components/SetupInstructions';
 import { useClusters } from '@contexts/ClusterContext';
 import { nodeService } from '@services/nodeService';
-import type { Node, NodeIn, ServerParams, SshAuthType, TestSshResult } from '@/types';
+import type { Node, NodeIn, NodeType, ServerParams, SshAuthType, TestSshResult } from '@/types';
 
-const inputClass =
-  'w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
+const inputClass = 'field-input';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -54,19 +54,22 @@ function parseRequiredInt(value: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, info, children }: { label: string; info?: string; children: ReactNode }) {
   return (
-    <label className="block text-sm">
-      <span className="mb-1 block font-medium text-slate-700">{label}</span>
+    <div>
+      <span className="field-label">
+        {label}
+        {info ? <InfoTip text={info} /> : null}
+      </span>
       {children}
-    </label>
+    </div>
   );
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
+    <section className="card space-y-4">
+      <h2 className="card-title">{title}</h2>
       {children}
     </section>
   );
@@ -91,6 +94,7 @@ export default function NodeFormScreen() {
   const [loadedClusterId, setLoadedClusterId] = useState<string | null>(clusterId ?? null);
 
   const [name, setName] = useState('');
+  const [nodeType, setNodeType] = useState<NodeType>('local');
   const [host, setHost] = useState('');
   const [sshPort, setSshPort] = useState(22);
   const [sshUser, setSshUser] = useState('');
@@ -98,7 +102,7 @@ export default function NodeFormScreen() {
   const [sshPassword, setSshPassword] = useState('');
   const [sshPrivateKey, setSshPrivateKey] = useState('');
   const [sshPassphrase, setSshPassphrase] = useState('');
-  const [openaiBaseUrl, setOpenaiBaseUrl] = useState('');
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState('http://127.0.0.1:8080/v1');
   const [openaiApiKey, setOpenaiApiKey] = useState('');
   const [hfToken, setHfToken] = useState('');
   const [listenHost, setListenHost] = useState('0.0.0.0');
@@ -109,10 +113,11 @@ export default function NodeFormScreen() {
   function applyNode(node: Node) {
     setLoadedClusterId(node.clusterId);
     setName(node.name);
-    setHost(node.host);
-    setSshPort(node.sshPort);
+    setNodeType(node.nodeType === 'remote' ? 'remote' : 'local');
+    setHost(node.nodeType === 'remote' ? node.host : '');
+    setSshPort(node.sshPort || 22);
     setSshUser(node.sshUser);
-    setSshAuthType(node.sshAuthType);
+    setSshAuthType(node.nodeType === 'remote' && node.sshAuthType !== 'none' ? node.sshAuthType : 'password');
     setSshPassword(node.sshPassword);
     setSshPrivateKey(node.sshPrivateKey);
     setSshPassphrase(node.sshPassphrase);
@@ -149,16 +154,18 @@ export default function NodeFormScreen() {
   }, [nodeId]);
 
   function buildPayload(): NodeIn {
+    const local = nodeType === 'local';
     return {
       name: name.trim(),
-      host: host.trim(),
-      sshPort,
-      sshUser: sshUser.trim(),
-      sshAuthType,
-      sshPassword: sshAuthType === 'password' ? sshPassword : '',
-      sshPrivateKey: sshAuthType === 'private_key' ? sshPrivateKey : '',
-      sshPassphrase: sshAuthType === 'private_key' ? sshPassphrase : '',
-      openaiBaseUrl: openaiBaseUrl.trim(),
+      nodeType,
+      host: local ? 'localhost' : host.trim(),
+      sshPort: local ? 22 : sshPort,
+      sshUser: local ? '' : sshUser.trim(),
+      sshAuthType: local ? 'none' : sshAuthType,
+      sshPassword: !local && sshAuthType === 'password' ? sshPassword : '',
+      sshPrivateKey: !local && sshAuthType === 'private_key' ? sshPrivateKey : '',
+      sshPassphrase: !local && sshAuthType === 'private_key' ? sshPassphrase : '',
+      openaiBaseUrl: openaiBaseUrl.trim() || (local ? `http://127.0.0.1:${listenPort}/v1` : ''),
       openaiApiKey,
       hfToken,
       listenHost: listenHost.trim() || '0.0.0.0',
@@ -171,15 +178,24 @@ export default function NodeFormScreen() {
   async function handleSave(event: FormEvent) {
     event.preventDefault();
     const payload = buildPayload();
-    if (!payload.name || !payload.host || !payload.sshUser || !payload.openaiBaseUrl) {
-      setError('Name, host, SSH user, and OpenAI base URL are required');
+    const local = nodeType === 'local';
+    if (!payload.name || !payload.openaiBaseUrl) {
+      setError('Name and OpenAI base URL are required');
       return;
     }
-    if (payload.sshAuthType === 'password' && !payload.sshPassword) {
+    if (!local && !payload.host) {
+      setError('Host is required for remote nodes');
+      return;
+    }
+    if (!local && !payload.sshUser) {
+      setError('SSH user is required for remote hosts');
+      return;
+    }
+    if (!local && payload.sshAuthType === 'password' && !payload.sshPassword) {
       setError('SSH password is required');
       return;
     }
-    if (payload.sshAuthType === 'private_key' && !payload.sshPrivateKey) {
+    if (!local && payload.sshAuthType === 'private_key' && !payload.sshPrivateKey) {
       setError('SSH private key is required');
       return;
     }
@@ -206,7 +222,7 @@ export default function NodeFormScreen() {
 
   async function handleTestSsh() {
     if (!nodeId) {
-      setError('Save the node before testing SSH');
+      setError(nodeType === 'local' ? 'Save the node before testing' : 'Save the node before testing SSH');
       return;
     }
     setTesting(true);
@@ -224,52 +240,96 @@ export default function NodeFormScreen() {
   const backTo = loadedClusterId ? `/clusters/${loadedClusterId}` : '/';
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-8">
+    <div className="page page-narrow space-y-5">
       <div>
-        <Link to={backTo} className="text-sm text-blue-600 hover:underline">
+        <Link to={backTo} className="back">
           ← {loadedClusterId ? 'Cluster' : 'Clusters'}
         </Link>
-        <h1 className="mt-3 text-2xl font-semibold text-slate-900">{isEdit ? 'Edit node' : 'Register node'}</h1>
-        <p className="mt-1 text-sm text-slate-500">llama.cpp · no login · SSH secrets stay on this laptop</p>
+        <h1 className="mt-3">{isEdit ? 'Edit node' : 'Register node'}</h1>
+        <p className="page-sub">llama.cpp · no login · SSH secrets stay on this laptop</p>
       </div>
 
       {error ? <ErrorBanner message={error} /> : previewError ? <ErrorBanner message={previewError} /> : null}
 
-      {loading ? <p className="text-sm text-slate-500">Loading…</p> : null}
+      {loading ? <p className="muted">Loading…</p> : null}
 
       {ready && !loading ? (
       <form className="space-y-6" onSubmit={(event) => void handleSave(event)}>
         <Section title="Identity">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Name">
+            <div className="sm:col-span-2">
+              <span className="field-label">
+                Node type
+                <InfoTip text="Localhost talks to processes and files on this machine. Remote uses SSH to another host." />
+              </span>
+              <div className="flex flex-wrap gap-4">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="node-type"
+                    checked={nodeType === 'local'}
+                    onChange={() => {
+                      setNodeType('local');
+                      setSshAuthType('none');
+                      if (!openaiBaseUrl.trim()) {
+                        setOpenaiBaseUrl(`http://127.0.0.1:${listenPort}/v1`);
+                      }
+                    }}
+                  />
+                  Localhost
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="node-type"
+                    checked={nodeType === 'remote'}
+                    onChange={() => {
+                      setNodeType('remote');
+                      if (sshAuthType === 'none') setSshAuthType('password');
+                    }}
+                  />
+                  Remote (SSH)
+                </label>
+              </div>
+            </div>
+            <Field label="Name" info="Display name for this node in the cluster list.">
               <input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} required />
             </Field>
-            <Field label="Host">
-              <input
-                value={host}
-                onChange={(event) => setHost(event.target.value)}
-                className={inputClass}
-                placeholder="192.168.1.20"
-                required
-              />
-            </Field>
-            <Field label="SSH port">
-              <input
-                type="number"
-                value={sshPort}
-                onChange={(event) => setSshPort(parseRequiredInt(event.target.value, 22))}
-                className={inputClass}
-              />
-            </Field>
+            {nodeType === 'remote' ? (
+              <>
+                <Field label="Host" info="Remote hostname or IP. SSH is used to reach this machine.">
+                  <input
+                    value={host}
+                    onChange={(event) => setHost(event.target.value)}
+                    className={inputClass}
+                    placeholder="192.168.1.20"
+                    required
+                  />
+                </Field>
+                <Field label="SSH port" info="Remote SSH port.">
+                  <input
+                    type="number"
+                    value={sshPort}
+                    onChange={(event) => setSshPort(parseRequiredInt(event.target.value, 22))}
+                    className={inputClass}
+                  />
+                </Field>
+              </>
+            ) : (
+              <p className="muted sm:col-span-1 self-end">
+                This machine — engine, models, and files are local. No SSH host or port.
+              </p>
+            )}
           </div>
         </Section>
 
+        {nodeType === 'remote' ? (
         <Section title="SSH">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="User">
+            <Field label="User" info="SSH login name on the remote machine.">
               <input value={sshUser} onChange={(event) => setSshUser(event.target.value)} className={inputClass} required />
             </Field>
-            <Field label="Auth type">
+            <Field label="Auth type" info="How the API logs in: password or a pasted private key.">
               <select
                 value={sshAuthType}
                 onChange={(event) => setSshAuthType(event.target.value as SshAuthType)}
@@ -280,7 +340,7 @@ export default function NodeFormScreen() {
               </select>
             </Field>
             {sshAuthType === 'password' ? (
-              <Field label="Password">
+              <Field label="Password" info="SSH password. Stored as entered on this laptop.">
                 <input
                   type="password"
                   value={sshPassword}
@@ -292,7 +352,7 @@ export default function NodeFormScreen() {
             ) : (
               <>
                 <div className="sm:col-span-2">
-                  <Field label="Private key">
+                  <Field label="Private key" info="PEM / OpenSSH private key text. Stored as entered.">
                     <textarea
                       value={sshPrivateKey}
                       onChange={(event) => setSshPrivateKey(event.target.value)}
@@ -302,7 +362,7 @@ export default function NodeFormScreen() {
                     />
                   </Field>
                 </div>
-                <Field label="Passphrase">
+                <Field label="Passphrase" info="Optional passphrase for the private key.">
                   <input
                     type="password"
                     value={sshPassphrase}
@@ -316,11 +376,15 @@ export default function NodeFormScreen() {
             )}
           </div>
         </Section>
+        ) : null}
 
         <Section title="OpenAI">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Field label="Base URL">
+              <Field
+                label="Base URL"
+                info="OpenAI-compatible base, including /v1. Used for health, model list, and chat."
+              >
                 <input
                   value={openaiBaseUrl}
                   onChange={(event) => setOpenaiBaseUrl(event.target.value)}
@@ -330,7 +394,7 @@ export default function NodeFormScreen() {
                 />
               </Field>
             </div>
-            <Field label="API key">
+            <Field label="API key" info="Optional Bearer token if llama-server was started with an API key.">
               <input
                 type="password"
                 value={openaiApiKey}
@@ -340,7 +404,7 @@ export default function NodeFormScreen() {
                 autoComplete="off"
               />
             </Field>
-            <Field label="Hugging Face token">
+            <Field label="Hugging Face token" info="Optional token for gated GGUF downloads from Hugging Face.">
               <input
                 type="password"
                 value={hfToken}
@@ -355,10 +419,10 @@ export default function NodeFormScreen() {
 
         <Section title="Server">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Listen host">
+            <Field label="Listen host" info="Address llama-server binds (--host). 0.0.0.0 accepts LAN clients.">
               <input value={listenHost} onChange={(event) => setListenHost(event.target.value)} className={inputClass} />
             </Field>
-            <Field label="Listen port">
+            <Field label="Listen port" info="TCP port llama-server listens on (--port). Must match the OpenAI base URL.">
               <input
                 type="number"
                 value={listenPort}
@@ -367,7 +431,7 @@ export default function NodeFormScreen() {
               />
             </Field>
             <div className="sm:col-span-2">
-              <Field label="Model dir">
+              <Field label="Model dir" info="Directory on the node where GGUF files are stored. ~/models is expanded on the machine.">
                 <input value={modelDir} onChange={(event) => setModelDir(event.target.value)} className={inputClass} />
               </Field>
             </div>
@@ -391,21 +455,27 @@ export default function NodeFormScreen() {
               type="button"
               onClick={() => void handleTestSsh()}
               disabled={!nodeId || testing || loading}
-              title={nodeId ? 'Test SSH' : 'Save the node first'}
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60"
+              title={nodeId ? (nodeType === 'local' ? 'Test local engine' : 'Test SSH') : 'Save the node first'}
+              className="toggle"
             >
-              {testing ? 'Testing SSH…' : 'Test SSH'}
+              {testing
+                ? nodeType === 'local'
+                  ? 'Testing local…'
+                  : 'Testing SSH…'
+                : nodeType === 'local'
+                  ? 'Test local'
+                  : 'Test SSH'}
             </button>
             {sshResult ? (
-              <p className="text-sm text-emerald-700">
-                SSH ok · {sshResult.uname} · {sshResult.llamaServer}
+              <p className="ok-line">
+                {sshResult.local ? 'Local ok' : 'SSH ok'} · {sshResult.uname} · {sshResult.llamaServer}
               </p>
             ) : null}
           </div>
           <button
             type="submit"
             disabled={saving || loading}
-            className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            className="toggle accent"
           >
             {saving ? 'Saving…' : isEdit ? 'Save' : 'Create'}
           </button>

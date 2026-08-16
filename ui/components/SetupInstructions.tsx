@@ -6,17 +6,17 @@ const MAC_SETUP = `# 1. Install Homebrew if needed: https://brew.sh
 
 export default function SetupInstructions() {
   return (
-    <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Setup</h2>
+    <section className="card space-y-4">
+      <h2 className="card-title">Setup</h2>
       <div>
-        <h3 className="mb-2 text-sm font-medium text-slate-800">macOS</h3>
-        <pre className="overflow-x-auto rounded-md bg-slate-900 p-3 text-xs leading-5 text-slate-100">{MAC_SETUP}</pre>
+        <h3 className="field-label">macOS</h3>
+        <pre className="setup-pre">{MAC_SETUP}</pre>
       </div>
       <div>
-        <h3 className="mb-2 text-sm font-medium text-slate-800">Linux</h3>
-        <p className="text-sm text-slate-600">
-          Install a <code className="rounded bg-slate-100 px-1">llama-server</code> binary, create the model dir, and
-          open the listen port.
+        <h3 className="field-label">Linux</h3>
+        <p className="muted text-sm">
+          Install a <code className="inline">llama-server</code> binary, create the model dir, and open the listen
+          port.
         </p>
       </div>
     </section>

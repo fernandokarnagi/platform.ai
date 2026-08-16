@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import ErrorBanner from '@components/ErrorBanner';
+import StatusIcon from '@components/StatusIcon';
+import { useClusters } from '@contexts/ClusterContext';
 import { clusterService } from '@services/clusterService';
 import { nodeService } from '@services/nodeService';
-import type { Cluster, EngineStatus, Node, NodeStatus } from '@/types';
+import { formatDateTime } from '@/lib/format';
+import type { Cluster, EngineStatus, LastOpenAICheck, Node, NodeStatus } from '@/types';
 
 interface NodeProbe {
   status: NodeStatus;
@@ -14,15 +17,46 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function Badge({ ok, on, off }: { ok: boolean; on: string; off: string }) {
+function Modal({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
   return (
-    <span
-      className={[
-        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-        ok ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600',
-      ].join(' ')}
-    >
-      {ok ? on : off}
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <span>{title}</span>
+          <button type="button" onClick={onClose} className="modal-x">
+            ✕
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function OpenAIStatus({
+  live,
+  stored,
+}: {
+  live: NodeStatus | null;
+  stored: LastOpenAICheck | null;
+}) {
+  const openai = live?.openai ?? stored?.openai;
+  const checkedAt = live?.checkedAt ?? stored?.checkedAt;
+  if (!openai) {
+    return <span className="muted">Not checked</span>;
+  }
+  return (
+    <span className="status-cell">
+      <StatusIcon kind={openai === 'up' ? 'up' : 'down'} />
+      <span className="muted">{formatDateTime(checkedAt)}</span>
     </span>
   );
 }
@@ -30,12 +64,18 @@ function Badge({ ok, on, off }: { ok: boolean; on: string; off: string }) {
 export default function ClusterDetailScreen() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { refresh } = useClusters();
   const [cluster, setCluster] = useState<Cluster | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [probes, setProbes] = useState<Record<string, NodeProbe>>({});
   const [loading, setLoading] = useState(true);
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const probeNodes = useCallback(async (nodeList: Node[]) => {
     setProbing(true);
@@ -97,6 +137,7 @@ export default function ClusterDetailScreen() {
       setCluster(clusterData);
       setNodes(nodeList);
       await probeNodes(nodeList);
+      setNodes(await nodeService.listByCluster(id));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -115,39 +156,106 @@ export default function ClusterDetailScreen() {
       const nodeList = await nodeService.listByCluster(id);
       setNodes(nodeList);
       await probeNodes(nodeList);
+      setNodes(await nodeService.listByCluster(id));
     } catch (err) {
       setError(errorMessage(err));
     }
   }
 
+  function openEdit() {
+    if (!cluster) return;
+    setEditName(cluster.name);
+    setEditDescription(cluster.description ?? '');
+    setEditing(true);
+    setError(null);
+  }
+
+  async function handleEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!id) return;
+    const trimmed = editName.trim();
+    if (!trimmed) {
+      setError('Name is required');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await clusterService.update(id, {
+        name: trimmed,
+        description: editDescription.trim(),
+      });
+      setCluster(updated);
+      setEditing(false);
+      await refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteCluster() {
+    if (!id || !cluster) return;
+    const extra =
+      nodes.length > 0 ? ` This also deletes ${nodes.length} node${nodes.length === 1 ? '' : 's'}.` : '';
+    if (!window.confirm(`Delete cluster "${cluster.name}"?${extra}`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await clusterService.remove(id, { cascade: nodes.length > 0 });
+      await refresh();
+      navigate('/');
+    } catch (err) {
+      setError(errorMessage(err));
+      setDeleting(false);
+    }
+  }
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-8">
+    <div className="page space-y-5">
       <div>
-        <Link to="/" className="text-sm text-blue-600 hover:underline">
+        <Link to="/" className="back">
           ← Clusters
         </Link>
-        <div className="mt-3 flex items-start justify-between gap-4">
+        <div className="page-head mt-3">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900">{cluster?.name ?? 'Cluster'}</h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <h1>{cluster?.name ?? 'Cluster'}</h1>
+            <p className="page-sub">
               {cluster ? `${cluster.engine}${cluster.description ? ` · ${cluster.description}` : ''}` : ' '}
             </p>
           </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void handleRefresh()}
-              disabled={loading || probing}
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60"
-            >
+          <div className="page-actions">
+            <button type="button" onClick={() => void handleRefresh()} disabled={loading || probing} className="toggle">
               {probing ? 'Probing…' : 'Refresh'}
             </button>
             <button
               type="button"
               onClick={() => id && navigate(`/clusters/${id}/nodes/new`)}
-              className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              className="toggle accent"
             >
               Register node
+            </button>
+            <button
+              type="button"
+              disabled={!cluster || deleting}
+              className="toggle"
+              onClick={openEdit}
+            >
+              Edit cluster
+            </button>
+            <button
+              type="button"
+              disabled={!cluster || deleting}
+              title={
+                nodes.length > 0
+                  ? `Delete cluster and ${nodes.length} node${nodes.length === 1 ? '' : 's'}`
+                  : 'Delete cluster'
+              }
+              className="toggle danger"
+              onClick={() => void handleDeleteCluster()}
+            >
+              {deleting ? 'Deleting…' : 'Delete cluster'}
             </button>
           </div>
         </div>
@@ -155,29 +263,29 @@ export default function ClusterDetailScreen() {
 
       {error ? <ErrorBanner message={error} /> : null}
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead>
             <tr>
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Host</th>
-              <th className="px-4 py-3 font-medium">SSH</th>
-              <th className="px-4 py-3 font-medium">Engine</th>
-              <th className="px-4 py-3 font-medium">OpenAI</th>
-              <th className="px-4 py-3 font-medium">Current model</th>
+              <th>Name</th>
+              <th>Host</th>
+              <th>Access</th>
+              <th>Engine</th>
+              <th>OpenAI</th>
+              <th>Model</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={6} className="empty">
                   Loading…
                 </td>
               </tr>
             ) : null}
             {!loading && nodes.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={6} className="empty">
                   No nodes yet. Register a node to start.
                 </td>
               </tr>
@@ -187,39 +295,30 @@ export default function ClusterDetailScreen() {
                   const probe = probes[node.id];
                   const currentModel = probe?.status.models.join(', ') || '—';
                   return (
-                    <tr
-                      key={node.id}
-                      className="cursor-pointer border-t border-slate-100 hover:bg-slate-50"
-                      onClick={() => navigate(`/nodes/${node.id}`)}
-                    >
-                      <td className="px-4 py-3 font-medium text-slate-900">{node.name}</td>
-                      <td className="px-4 py-3 text-slate-600">
-                        {node.host}:{node.sshPort}
+                    <tr key={node.id} className="clickable" onClick={() => navigate(`/nodes/${node.id}`)}>
+                      <td>{node.name}</td>
+                      <td className="muted">
+                        {node.nodeType === 'local' ? 'localhost' : `${node.host}:${node.sshPort}`}
                       </td>
-                      <td className="px-4 py-3">
-                        {probe ? (
-                          <Badge ok={probe.status.ssh === 'up'} on="up" off="down" />
-                        ) : (
-                          <span className="text-slate-400">…</span>
-                        )}
+                      <td>
+                        {probe ? <StatusIcon kind={probe.status.ssh === 'up' ? 'up' : 'down'} /> : <span className="muted">…</span>}
                       </td>
-                      <td className="px-4 py-3">
+                      <td>
                         {probe?.engine ? (
-                          <Badge ok={probe.engine.running} on="running" off="stopped" />
+                          <StatusIcon kind={probe.engine.running ? 'running' : 'stopped'} />
                         ) : probe ? (
-                          <span className="text-slate-400">—</span>
+                          <span className="muted">—</span>
                         ) : (
-                          <span className="text-slate-400">…</span>
+                          <span className="muted">…</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
-                        {probe ? (
-                          <Badge ok={probe.status.openai === 'up'} on="up" off="down" />
-                        ) : (
-                          <span className="text-slate-400">…</span>
-                        )}
+                      <td>
+                        <OpenAIStatus
+                          live={probe?.status ?? null}
+                          stored={node.lastOpenAICheck}
+                        />
                       </td>
-                      <td className="px-4 py-3 text-slate-600">{probe ? currentModel : '…'}</td>
+                      <td className="muted">{probe ? currentModel : '…'}</td>
                     </tr>
                   );
                 })
@@ -227,6 +326,39 @@ export default function ClusterDetailScreen() {
           </tbody>
         </table>
       </div>
+
+      {editing ? (
+        <Modal title="Edit cluster" onClose={() => setEditing(false)}>
+          <form onSubmit={(event) => void handleEdit(event)}>
+            <label>
+              <span className="field-label">Name</span>
+              <input
+                autoFocus
+                value={editName}
+                onChange={(event) => setEditName(event.target.value)}
+                className="field-input"
+              />
+            </label>
+            <label>
+              <span className="field-label">Description</span>
+              <input
+                value={editDescription}
+                onChange={(event) => setEditDescription(event.target.value)}
+                className="field-input"
+                placeholder="optional"
+              />
+            </label>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setEditing(false)} className="toggle">
+                Cancel
+              </button>
+              <button type="submit" disabled={saving} className="toggle accent">
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
     </div>
   );
 }

@@ -1,22 +1,54 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import InfoTip from '@components/InfoTip';
 import { apiErrorStatus, nodeService } from '@services/nodeService';
 import type { CacheType, FitMode, FlashAttn, ServerParams } from '@/types';
 
-const inputClass =
-  'w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
+const inputClass = 'field-input';
 
 const CACHE_TYPES: CacheType[] = ['f32', 'f16', 'bf16', 'q8_0', 'q4_0', 'q4_1', 'iq4_nl', 'q5_0', 'q5_1'];
+
+const INFO = {
+  ctxSize: 'Prompt context size in tokens (--ctx-size). 0 uses the size stored in the model.',
+  gpuLayers: 'How many transformer layers to put in GPU/Metal memory (--n-gpu-layers). auto lets llama.cpp choose; all offloads every layer; a number is an exact count.',
+  flashAttn: 'Flash Attention (--flash-attn). Faster prompt processing and a smaller KV cache when the hardware supports it.',
+  threads: 'CPU threads used during generation (--threads). Omit to use the binary default.',
+  parallel: 'How many parallel request slots share this context (--parallel). Context is split across slots.',
+  batchSize: 'Logical maximum batch size for prompt processing (--batch-size).',
+  ubatchSize: 'Physical micro-batch size (--ubatch-size). Lower this if you run out of memory.',
+  kvOffload: 'Keep the KV cache on GPU/Metal (--kv-offload). Turn off to keep the cache on CPU RAM.',
+  fit: 'Let llama.cpp shrink unset sizes so the model fits device memory (--fit).',
+  cacheTypeK: 'Quantization type for the K cache (--cache-type-k). Smaller types save VRAM and can hurt quality.',
+  cacheTypeV: 'Quantization type for the V cache (--cache-type-v). Usually match K.',
+  nPredict: 'Maximum tokens to generate per request (--n-predict). -1 is unlimited.',
+  keep: 'Tokens from the first prompt to keep when the context rolls (--keep).',
+  threadsBatch: 'CPU threads for batch/prompt processing (--threads-batch). Defaults to --threads.',
+  splitMode: 'How to split the model across GPUs (--split-mode): none, layer, row, or tensor.',
+  mainGpu: 'Which GPU holds intermediate results or the whole model when split-mode is none (--main-gpu).',
+  tensorSplit: 'Fraction of the model on each GPU, comma-separated (--tensor-split), e.g. 3,1.',
+  device: 'Comma-separated devices to offload to (--device). Use llama-server --list-devices to see names.',
+  cpuMoe: 'Keep all Mixture-of-Experts weights on CPU (--cpu-moe). Frees GPU memory on large MoE models.',
+  nCpuMoe: 'Keep MoE weights of the first N layers on CPU (--n-cpu-moe).',
+  loadMode: 'How the GGUF is mapped into memory (--load-mode): auto, mmap, mlock, dio, or none.',
+  jinja: 'Enable Jinja chat templates (--jinja). Needed for many tool-calling models.',
+  chatTemplate: 'Override the chat template name or string (--chat-template).',
+  metrics: 'Expose Prometheus metrics on the server (--metrics).',
+  alias: 'Name the model reports on the OpenAI /v1/models API (-a / --alias).',
+  extraFlags: 'Raw extra CLI flags, appended last. Do not set -m, --model, --host, or --port — those are owned by the form.',
+};
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, info, children }: { label: string; info?: string; children: ReactNode }) {
   return (
-    <label className="block text-sm">
-      <span className="mb-1 block font-medium text-slate-700">{label}</span>
+    <div>
+      <span className="field-label">
+        {label}
+        {info ? <InfoTip text={info} /> : null}
+      </span>
       {children}
-    </label>
+    </div>
   );
 }
 
@@ -54,6 +86,7 @@ export default function ServerParamsFields({
   onPreviewError,
 }: ServerParamsFieldsProps) {
   const [command, setCommand] = useState('');
+  const [copied, setCopied] = useState(false);
   const [extraFlagsError, setExtraFlagsError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -98,10 +131,10 @@ export default function ServerParamsFields({
 
   return (
     <>
-      <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Load parameters</h2>
+      <section className="card space-y-4">
+        <h2 className="card-title">Load parameters</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Context length">
+          <Field label="Context length" info={INFO.ctxSize}>
             <input
               type="number"
               value={params.ctxSize}
@@ -109,8 +142,11 @@ export default function ServerParamsFields({
               className={inputClass}
             />
           </Field>
-          <div className="text-sm">
-            <span className="mb-1 block font-medium text-slate-700">GPU layers</span>
+          <div>
+            <span className="field-label">
+              GPU layers
+              <InfoTip text={INFO.gpuLayers} />
+            </span>
             <div className="flex gap-2">
               <select
                 value={mode}
@@ -138,7 +174,7 @@ export default function ServerParamsFields({
               ) : null}
             </div>
           </div>
-          <Field label="Flash attention">
+          <Field label="Flash attention" info={INFO.flashAttn}>
             <select
               value={params.flashAttn}
               onChange={(event) => patch({ flashAttn: event.target.value as FlashAttn })}
@@ -149,7 +185,7 @@ export default function ServerParamsFields({
               <option value="off">off</option>
             </select>
           </Field>
-          <Field label="CPU threads">
+          <Field label="CPU threads" info={INFO.threads}>
             <input
               type="number"
               value={params.threads ?? ''}
@@ -158,7 +194,7 @@ export default function ServerParamsFields({
               placeholder="omit"
             />
           </Field>
-          <Field label="Parallel slots">
+          <Field label="Parallel slots" info={INFO.parallel}>
             <input
               type="number"
               value={params.parallel}
@@ -166,7 +202,7 @@ export default function ServerParamsFields({
               className={inputClass}
             />
           </Field>
-          <Field label="Batch size">
+          <Field label="Batch size" info={INFO.batchSize}>
             <input
               type="number"
               value={params.batchSize ?? ''}
@@ -175,7 +211,7 @@ export default function ServerParamsFields({
               placeholder="omit"
             />
           </Field>
-          <Field label="µbatch size">
+          <Field label="µbatch size" info={INFO.ubatchSize}>
             <input
               type="number"
               value={params.ubatchSize ?? ''}
@@ -184,16 +220,18 @@ export default function ServerParamsFields({
               placeholder="omit"
             />
           </Field>
-          <label className="flex items-end gap-2 text-sm">
+          <label className="flex items-end gap-2">
             <input
               type="checkbox"
               checked={params.kvOffload}
               onChange={(event) => patch({ kvOffload: event.target.checked })}
-              className="h-4 w-4 rounded border-slate-300"
             />
-            <span className="font-medium text-slate-700">KV offload</span>
+            <span className="field-label" style={{ margin: 0 }}>
+              KV offload
+              <InfoTip text={INFO.kvOffload} />
+            </span>
           </label>
-          <Field label="Fit in memory">
+          <Field label="Fit in memory" info={INFO.fit}>
             <select
               value={params.fit}
               onChange={(event) => patch({ fit: event.target.value as FitMode })}
@@ -203,7 +241,7 @@ export default function ServerParamsFields({
               <option value="off">off</option>
             </select>
           </Field>
-          <Field label="Cache type K">
+          <Field label="Cache type K" info={INFO.cacheTypeK}>
             <select
               value={params.cacheTypeK ?? ''}
               onChange={(event) =>
@@ -219,7 +257,7 @@ export default function ServerParamsFields({
               ))}
             </select>
           </Field>
-          <Field label="Cache type V">
+          <Field label="Cache type V" info={INFO.cacheTypeV}>
             <select
               value={params.cacheTypeV ?? ''}
               onChange={(event) =>
@@ -238,13 +276,11 @@ export default function ServerParamsFields({
         </div>
       </section>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="card">
         <details>
-          <summary className="cursor-pointer text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Advanced
-          </summary>
+          <summary className="card-title cursor-pointer">Advanced</summary>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <Field label="Max predict">
+            <Field label="Max predict" info={INFO.nPredict}>
               <input
                 type="number"
                 value={params.nPredict ?? ''}
@@ -253,7 +289,7 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <Field label="Keep tokens">
+            <Field label="Keep tokens" info={INFO.keep}>
               <input
                 type="number"
                 value={params.keep ?? ''}
@@ -262,7 +298,7 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <Field label="Batch threads">
+            <Field label="Batch threads" info={INFO.threadsBatch}>
               <input
                 type="number"
                 value={params.threadsBatch ?? ''}
@@ -271,7 +307,7 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <Field label="Split mode">
+            <Field label="Split mode" info={INFO.splitMode}>
               <input
                 value={params.splitMode ?? ''}
                 onChange={(event) => patch({ splitMode: event.target.value || null })}
@@ -279,7 +315,7 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <Field label="Main GPU">
+            <Field label="Main GPU" info={INFO.mainGpu}>
               <input
                 type="number"
                 value={params.mainGpu ?? ''}
@@ -288,7 +324,7 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <Field label="Tensor split">
+            <Field label="Tensor split" info={INFO.tensorSplit}>
               <input
                 value={params.tensorSplit ?? ''}
                 onChange={(event) => patch({ tensorSplit: event.target.value || null })}
@@ -296,7 +332,7 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <Field label="Device list">
+            <Field label="Device list" info={INFO.device}>
               <input
                 value={params.device ?? ''}
                 onChange={(event) => patch({ device: event.target.value || null })}
@@ -304,16 +340,18 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <label className="flex items-end gap-2 text-sm">
+            <label className="flex items-end gap-2">
               <input
                 type="checkbox"
                 checked={Boolean(params.cpuMoe)}
                 onChange={(event) => patch({ cpuMoe: event.target.checked ? true : null })}
-                className="h-4 w-4 rounded border-slate-300"
               />
-              <span className="font-medium text-slate-700">CPU MoE</span>
+              <span className="field-label" style={{ margin: 0 }}>
+                CPU MoE
+                <InfoTip text={INFO.cpuMoe} />
+              </span>
             </label>
-            <Field label="N CPU MoE layers">
+            <Field label="N CPU MoE layers" info={INFO.nCpuMoe}>
               <input
                 type="number"
                 value={params.nCpuMoe ?? ''}
@@ -322,7 +360,7 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <Field label="Load mode">
+            <Field label="Load mode" info={INFO.loadMode}>
               <input
                 value={params.loadMode ?? ''}
                 onChange={(event) => patch({ loadMode: event.target.value || null })}
@@ -330,16 +368,18 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <label className="flex items-end gap-2 text-sm">
+            <label className="flex items-end gap-2">
               <input
                 type="checkbox"
                 checked={Boolean(params.jinja)}
                 onChange={(event) => patch({ jinja: event.target.checked ? true : null })}
-                className="h-4 w-4 rounded border-slate-300"
               />
-              <span className="font-medium text-slate-700">Jinja</span>
+              <span className="field-label" style={{ margin: 0 }}>
+                Jinja
+                <InfoTip text={INFO.jinja} />
+              </span>
             </label>
-            <Field label="Chat template">
+            <Field label="Chat template" info={INFO.chatTemplate}>
               <input
                 value={params.chatTemplate ?? ''}
                 onChange={(event) => patch({ chatTemplate: event.target.value || null })}
@@ -347,16 +387,18 @@ export default function ServerParamsFields({
                 placeholder="omit"
               />
             </Field>
-            <label className="flex items-end gap-2 text-sm">
+            <label className="flex items-end gap-2">
               <input
                 type="checkbox"
                 checked={Boolean(params.metrics)}
                 onChange={(event) => patch({ metrics: event.target.checked ? true : null })}
-                className="h-4 w-4 rounded border-slate-300"
               />
-              <span className="font-medium text-slate-700">Metrics</span>
+              <span className="field-label" style={{ margin: 0 }}>
+                Metrics
+                <InfoTip text={INFO.metrics} />
+              </span>
             </label>
-            <Field label="Model alias">
+            <Field label="Model alias" info={INFO.alias}>
               <input
                 value={params.alias ?? ''}
                 onChange={(event) => patch({ alias: event.target.value || null })}
@@ -368,10 +410,13 @@ export default function ServerParamsFields({
         </details>
       </section>
 
-      <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Extra flags</h2>
-        <label className="block text-sm">
-          <span className="mb-1 block font-medium text-slate-700">Flags</span>
+      <section className="card space-y-3">
+        <h2 className="card-title">Extra flags</h2>
+        <label>
+          <span className="field-label">
+            Flags
+            <InfoTip text={INFO.extraFlags} />
+          </span>
           <textarea
             value={params.extraFlags}
             onChange={(event) => patch({ extraFlags: event.target.value })}
@@ -380,14 +425,28 @@ export default function ServerParamsFields({
             placeholder="appended last — do not set -m, --model, --host, or --port"
           />
         </label>
-        {extraFlagsError ? <p className="text-sm text-red-700">{extraFlagsError}</p> : null}
+        {extraFlagsError ? <p className="err-banner">{extraFlagsError}</p> : null}
       </section>
 
-      <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Command preview</h2>
-        <pre className="overflow-x-auto rounded-md bg-slate-900 p-3 text-xs leading-5 text-slate-100">
-          {command || '…'}
-        </pre>
+      <section className="card space-y-3">
+        <div className="preview-head">
+          <h2 className="card-title">Command preview</h2>
+          <button
+            type="button"
+            className="toggle"
+            disabled={!command}
+            onClick={() => {
+              if (!command) return;
+              void navigator.clipboard.writeText(command).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              });
+            }}
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+        <pre className="preview-box">{command || '…'}</pre>
       </section>
     </>
   );

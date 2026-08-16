@@ -7,3 +7,8 @@ __pycache__/
 node_modules/
 ui/dist/
 .DS_Store
+graphify-out/cache/
+_ai/.obsidian/workspace.json
+_ai/.obsidian/workspace-mobile.json
+.playwright-mcp/
+*.png

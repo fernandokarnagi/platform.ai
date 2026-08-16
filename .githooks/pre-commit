@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Keep _ai/generated in the same commit as the code that produced it.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+"$ROOT/scripts/update-brain.sh"
+git add "$ROOT/_ai/generated"
