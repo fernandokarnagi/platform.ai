@@ -60,6 +60,46 @@ async def test_status_up_and_chat(app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_applies_sampling_defaults(app, monkeypatch):
+    captured = {}
+
+    async def fake_ssh(node, command, timeout=30.0):
+        return FakeResult("Darwin\n")
+
+    async def fake_chat(base_url, api_key, payload):
+        captured.update(payload)
+        return {"choices": [{"message": {"role": "assistant", "content": "hi"}}]}
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_ssh)
+    monkeypatch.setattr(proxy, "chat_completions", fake_chat)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cluster = (await client.post("/clusters", json={"name": "desk-macs"})).json()
+        node = (await client.post(
+            f"/clusters/{cluster['id']}/nodes",
+            json={
+                "name": "mac-1",
+                "host": "192.168.1.10",
+                "sshUser": "fernando",
+                "sshAuthType": "password",
+                "sshPassword": "secret",
+                "openaiBaseUrl": "http://192.168.1.10:8080/v1/",
+            },
+        )).json()
+        chat = await client.post(
+            f"/nodes/{node['id']}/chat",
+            json={"model": "phi", "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert chat.status_code == 200
+        assert captured["temperature"] == 1.0
+        assert captured["top_p"] == 0.95
+        assert captured["top_k"] == 20
+        assert captured["min_p"] == 0.0
+        assert captured["presence_penalty"] == 0.0
+        assert captured["repetition_penalty"] == 1.0
+
+
+@pytest.mark.asyncio
 async def test_status_openai_down_is_200(app, monkeypatch):
     async def fake_ssh(node, command, timeout=30.0):
         return FakeResult("Darwin\n")

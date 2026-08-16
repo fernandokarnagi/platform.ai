@@ -2,7 +2,9 @@ import type {
   ChatCompletion,
   ChatIn,
   DownloadModelIn,
-  DownloadModelResult,
+  DownloadJob,
+  EngineLogs,
+  HfRepoFiles,
   EngineStatus,
   Node,
   NodeIn,
@@ -102,18 +104,22 @@ export const nodeService = {
     return api<TestSshResult>(`/nodes/${id}/test-ssh`, { method: 'POST' });
   },
 
-  status(id: string): Promise<NodeStatus> {
-    return api<NodeStatus>(`/nodes/${id}/status`);
+  status(id: string, refresh = false, check?: 'ssh' | 'engine' | 'openai'): Promise<NodeStatus> {
+    const query = new URLSearchParams();
+    if (refresh) query.set('refresh', 'true');
+    if (check) query.set('check', check);
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return api<NodeStatus>(`/nodes/${id}/status${suffix}`);
   },
 
-  engine(id: string): Promise<EngineStatus> {
-    return api<EngineStatus>(`/nodes/${id}/engine`);
+  engine(id: string, refresh = false): Promise<EngineStatus> {
+    return api<EngineStatus>(`/nodes/${id}/engine${refresh ? '?refresh=true' : ''}`);
   },
 
-  start(id: string, modelFilename: string): Promise<EngineStatus> {
+  start(id: string): Promise<EngineStatus> {
     return api<EngineStatus>(`/nodes/${id}/engine/start`, {
       method: 'POST',
-      body: JSON.stringify({ modelFilename }),
+      body: JSON.stringify({}),
     });
   },
 
@@ -125,12 +131,20 @@ export const nodeService = {
     return api<EngineStatus>(`/nodes/${id}/engine/restart`, { method: 'POST' });
   },
 
-  listModels(id: string): Promise<RemoteModel[]> {
-    return api<RemoteModel[]>(`/nodes/${id}/models`);
+  logs(id: string, lines = 200): Promise<EngineLogs> {
+    return api<EngineLogs>(`/nodes/${id}/engine/logs?lines=${lines}`);
   },
 
-  downloadModel(id: string, payload: DownloadModelIn): Promise<DownloadModelResult> {
-    return api<DownloadModelResult>(`/nodes/${id}/models/download`, {
+  listModels(id: string, refresh = false): Promise<RemoteModel[]> {
+    return api<RemoteModel[]>(`/nodes/${id}/models${refresh ? '?refresh=true' : ''}`);
+  },
+
+  listHfFiles(id: string, repo: string): Promise<HfRepoFiles> {
+    return api<HfRepoFiles>(`/nodes/${id}/models/huggingface?repo=${encodeURIComponent(repo)}`);
+  },
+
+  downloadModel(id: string, payload: DownloadModelIn): Promise<DownloadJob> {
+    return api<DownloadJob>(`/nodes/${id}/models/download`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });

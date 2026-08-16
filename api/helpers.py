@@ -1,7 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from bson import ObjectId
 from fastapi import HTTPException, status
 from api.models.models import ServerParams
+
+STATUS_CACHE_TTL = timedelta(minutes=30)
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
@@ -90,11 +92,75 @@ def node_helper(doc: dict) -> dict:
         "listenHost": doc.get("listenHost", "0.0.0.0"),
         "listenPort": doc.get("listenPort", 8080),
         "modelDir": doc.get("modelDir", "~/models"),
+        "llamaServerPath": doc.get("llamaServerPath") or "",
+        "selectedModel": doc.get("selectedModel") or "",
         "serverParams": doc.get("serverParams") or default_server_params(),
         "lastStart": doc.get("lastStart"),
         "lastOpenAICheck": _last_openai_check(doc.get("lastOpenAICheck")),
+        "statusCache": status_cache_helper(doc),
+        "modelsCache": models_cache_helper(doc),
         "createdAt": _iso(doc.get("createdAt")),
         "updatedAt": _iso(doc.get("updatedAt")),
+    }
+
+
+def _parse_checked_at(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value.replace("Z", ""))
+        except ValueError:
+            return None
+    return None
+
+
+def status_cache_is_fresh(doc: dict) -> bool:
+    cache = doc.get("statusCache")
+    if not isinstance(cache, dict):
+        return False
+    checked = _parse_checked_at(cache.get("checkedAt"))
+    if not checked:
+        return False
+    return datetime.utcnow() - checked < STATUS_CACHE_TTL
+
+
+def models_cache_is_fresh(doc: dict) -> bool:
+    cache = doc.get("modelsCache")
+    if not isinstance(cache, dict):
+        return False
+    checked = _parse_checked_at(cache.get("checkedAt"))
+    if not checked:
+        return False
+    return datetime.utcnow() - checked < STATUS_CACHE_TTL
+
+
+def models_cache_helper(doc: dict) -> dict | None:
+    cache = doc.get("modelsCache")
+    if not isinstance(cache, dict):
+        return None
+    checked = cache.get("checkedAt")
+    return {
+        "items": list(cache.get("items") or []),
+        "checkedAt": _iso(checked) if checked else "",
+        "fresh": models_cache_is_fresh(doc),
+    }
+
+
+def status_cache_helper(doc: dict) -> dict | None:
+    cache = doc.get("statusCache")
+    if not isinstance(cache, dict):
+        return None
+    checked = cache.get("checkedAt")
+    return {
+        "ssh": cache.get("ssh") or "down",
+        "openai": cache.get("openai") or "down",
+        "running": bool(cache.get("running")),
+        "pid": cache.get("pid"),
+        "models": list(cache.get("models") or []),
+        "detail": cache.get("detail"),
+        "checkedAt": _iso(checked) if checked else "",
+        "fresh": status_cache_is_fresh(doc),
     }
 
 
@@ -107,6 +173,28 @@ def _last_openai_check(value) -> dict | None:
         "checkedAt": _iso(checked) if checked else "",
         "models": value.get("models") or [],
         "detail": value.get("detail"),
+    }
+
+
+def download_helper(doc: dict) -> dict:
+    cluster_id = doc.get("clusterId")
+    node_id = doc.get("nodeId")
+    return {
+        "id": str(doc["_id"]),
+        "nodeId": str(node_id) if node_id is not None else "",
+        "clusterId": str(cluster_id) if cluster_id is not None else "",
+        "nodeName": doc.get("nodeName") or "",
+        "source": doc.get("source") or "",
+        "repo": doc.get("repo") or "",
+        "filename": doc.get("filename") or "",
+        "url": doc.get("url") or "",
+        "status": doc.get("status") or "queued",
+        "bytes": int(doc.get("bytes") or 0),
+        "totalBytes": int(doc.get("totalBytes") or 0),
+        "detail": doc.get("detail") or "",
+        "createdAt": _iso(doc.get("createdAt")),
+        "updatedAt": _iso(doc.get("updatedAt")),
+        "finishedAt": _iso(doc.get("finishedAt")) if doc.get("finishedAt") else "",
     }
 
 

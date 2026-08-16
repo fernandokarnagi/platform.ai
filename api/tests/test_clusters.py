@@ -23,11 +23,7 @@ async def test_create_and_list_cluster(app):
 
 
 @pytest.mark.asyncio
-async def test_list_cluster_reports_stopped_nodes(app, monkeypatch):
-    async def fake_running(node):
-        return False
-
-    monkeypatch.setattr("api.routes.clusters.engine_mod.is_running", fake_running)
+async def test_list_cluster_reports_stopped_nodes(app):
     async with await _client(app) as client:
         created = await client.post("/clusters", json={"name": "desk-macs"})
         cluster_id = created.json()["id"]

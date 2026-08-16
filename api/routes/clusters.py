@@ -1,11 +1,9 @@
-import asyncio
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query, status
 from api.database import get_database
 from api.helpers import cluster_helper, parse_object_id
 from api.logger import get_logger
 from api.models.models import ClusterIn, ClusterUpdate
-from api.services import engine as engine_mod
 
 router = APIRouter(tags=["clusters"], prefix="/clusters")
 logger = get_logger(__name__)
@@ -19,8 +17,8 @@ async def _node_stats(db, cluster_id) -> tuple[int, int]:
     nodes = [doc async for doc in db.nodes.find({"clusterId": cluster_id})]
     if not nodes:
         return 0, 0
-    flags = await asyncio.gather(*(engine_mod.is_running(node) for node in nodes))
-    return len(nodes), sum(1 for running in flags if running)
+    running = sum(1 for node in nodes if (node.get("statusCache") or {}).get("running"))
+    return len(nodes), running
 
 
 @router.get("")

@@ -17,6 +17,9 @@ Written by `scripts/update-brain.sh` on 2026-08-16. Do not edit.
 | PUT | `/clusters/{cluster_id}` | `clusters.py` |
 | GET | `/clusters/{cluster_id}/nodes` | `nodes.py` |
 | POST | `/clusters/{cluster_id}/nodes` | `nodes.py` |
+| GET | `/downloads` | `downloads.py` |
+| GET | `/downloads/{job_id}` | `downloads.py` |
+| POST | `/downloads/{job_id}/cancel` | `downloads.py` |
 | POST | `/engines/llama.cpp/preview` | `engines.py` |
 | GET | `/health` | `main.py` |
 | DELETE | `/nodes/{node_id}` | `nodes.py` |
@@ -24,12 +27,14 @@ Written by `scripts/update-brain.sh` on 2026-08-16. Do not edit.
 | PUT | `/nodes/{node_id}` | `nodes.py` |
 | POST | `/nodes/{node_id}/chat` | `nodes.py` |
 | GET | `/nodes/{node_id}/engine` | `nodes.py` |
+| GET | `/nodes/{node_id}/engine/logs` | `nodes.py` |
 | POST | `/nodes/{node_id}/engine/restart` | `nodes.py` |
 | POST | `/nodes/{node_id}/engine/start` | `nodes.py` |
 | POST | `/nodes/{node_id}/engine/stop` | `nodes.py` |
 | DELETE | `/nodes/{node_id}/models` | `nodes.py` |
 | GET | `/nodes/{node_id}/models` | `nodes.py` |
 | POST | `/nodes/{node_id}/models/download` | `nodes.py` |
+| GET | `/nodes/{node_id}/models/huggingface` | `nodes.py` |
 | GET | `/nodes/{node_id}/models/openai` | `nodes.py` |
 | GET | `/nodes/{node_id}/status` | `nodes.py` |
 | POST | `/nodes/{node_id}/test-ssh` | `nodes.py` |

@@ -1,7 +1,8 @@
+import re
 import shlex
-from api.helpers import safe_model_filename
 
-FORBIDDEN_EXTRA = {"-m", "--model", "--host", "--port"}
+FORBIDDEN_EXTRA = {"-m", "--model", "--models-dir", "--host", "--port"}
+_HF_HOST = re.compile(r"^https?://(huggingface\.co|hf\.co)/", re.I)
 
 
 def _flag_value(value) -> str:
@@ -21,17 +22,15 @@ class LlamaCppEngine:
         tokens = shlex.split(extra or "")
         if any(tok in FORBIDDEN_EXTRA for tok in tokens):
             raise ForbiddenExtraFlagsError(
-                "extraFlags cannot include -m, --model, --host, or --port"
+                "extraFlags cannot include -m, --model, --models-dir, --host, or --port"
             )
         return tokens
 
     @staticmethod
-    def build_argv(node: dict, model_filename: str, model_dir_expanded: str) -> list[str]:
-        filename = model_filename if model_filename == "$MODEL" else safe_model_filename(model_filename)
-        model_path = f"{model_dir_expanded.rstrip('/')}/{filename}"
+    def build_argv(node: dict, model_dir_expanded: str) -> list[str]:
         params = node.get("serverParams") or {}
         argv = [
-            "-m", model_path,
+            "--models-dir", model_dir_expanded.rstrip("/") or (node.get("modelDir") or "~/models"),
             "--host", str(node.get("listenHost") or "0.0.0.0"),
             "--port", str(node.get("listenPort") or 8080),
             "--ctx-size", _flag_value(params.get("ctxSize", 0)),
@@ -90,16 +89,27 @@ class LlamaCppEngine:
         return (
             "uname -s; "
             "if command -v llama-server >/dev/null 2>&1; then command -v llama-server; "
-            "elif [ -x \"$(brew --prefix 2>/dev/null)/bin/llama-server\" ]; then echo \"$(brew --prefix)/bin/llama-server\"; "
+            "elif command -v brew >/dev/null 2>&1 && [ -x \"$(brew --prefix)/bin/llama-server\" ]; "
+            "then echo \"$(brew --prefix)/bin/llama-server\"; "
+            "elif [ -x /opt/homebrew/bin/llama-server ]; then echo /opt/homebrew/bin/llama-server; "
             "elif [ -x /usr/local/bin/llama-server ]; then echo /usr/local/bin/llama-server; "
             "else echo MISSING; fi"
         )
 
     @staticmethod
-    def preview_command(node: dict, model_filename: str = "$MODEL") -> str:
+    def preview_command(node: dict) -> str:
         model_dir = node.get("modelDir") or "~/models"
-        argv = LlamaCppEngine.build_argv(node, model_filename, model_dir)
+        argv = LlamaCppEngine.build_argv(node, model_dir)
         return "llama-server " + " ".join(argv)
+
+    @staticmethod
+    @staticmethod
+    def verify_binary_command(path: str) -> str:
+        return (
+            f"BIN={shlex.quote(path)}; "
+            'BIN="${BIN/#\\~/$HOME}"; '
+            'if [ -x "$BIN" ]; then echo "$BIN"; else echo MISSING; fi'
+        )
 
     @staticmethod
     def resolve_binary_command() -> str:
@@ -107,6 +117,7 @@ class LlamaCppEngine:
             "if command -v llama-server >/dev/null 2>&1; then command -v llama-server; "
             "elif command -v brew >/dev/null 2>&1 && [ -x \"$(brew --prefix)/bin/llama-server\" ]; "
             "then echo \"$(brew --prefix)/bin/llama-server\"; "
+            "elif [ -x /opt/homebrew/bin/llama-server ]; then echo /opt/homebrew/bin/llama-server; "
             "elif [ -x /usr/local/bin/llama-server ]; then echo /usr/local/bin/llama-server; "
             "else echo MISSING; fi"
         )
@@ -118,6 +129,14 @@ class LlamaCppEngine:
     @staticmethod
     def read_pid_command() -> str:
         return "if [ -f ~/.platformai/llama-server.pid ]; then cat ~/.platformai/llama-server.pid; fi"
+
+    @staticmethod
+    def tail_log_command(lines: int = 200) -> str:
+        n = max(20, min(int(lines), 1000))
+        return (
+            f"if [ -f {LlamaCppEngine.LOG_FILE} ]; then tail -n {n} {LlamaCppEngine.LOG_FILE}; "
+            "else echo __PLATFORMAI_LOG_MISSING__; fi"
+        )
 
     @staticmethod
     def pid_alive_command(pid: str) -> str:
@@ -150,8 +169,71 @@ class LlamaCppEngine:
         return f"if [ -f {shlex.quote(path)} ]; then echo OK; else echo MISSING; fi"
 
     @staticmethod
-    def hf_url(repo: str, filename: str) -> str:
-        return f"https://huggingface.co/{repo}/resolve/main/{filename}"
+    @staticmethod
+    def parse_hf_ref(repo: str, filename: str = "") -> dict:
+        raw = (repo or "").strip()
+        name = (filename or "").strip()
+        revision = "main"
+        quant = ""
+        if _HF_HOST.match(raw):
+            path = _HF_HOST.sub("", raw).strip("/")
+            parts = path.split("/")
+            if len(parts) >= 2:
+                raw = f"{parts[0]}/{parts[1]}"
+            for key in ("resolve", "blob", "tree"):
+                if key in parts:
+                    idx = parts.index(key)
+                    if idx + 1 < len(parts):
+                        revision = parts[idx + 1] or "main"
+                    if key != "tree" and idx + 2 < len(parts) and not name:
+                        name = "/".join(parts[idx + 2:]).split("?")[0]
+                    break
+        else:
+            raw = raw.strip("/")
+            if "@" in raw:
+                raw, revision = raw.rsplit("@", 1)
+            elif ":" in raw:
+                raw, quant = raw.rsplit(":", 1)
+        raw = raw.split("?")[0].strip("/")
+        return {
+            "repo": raw,
+            "revision": revision or "main",
+            "filename": name,
+            "quant": (quant or "").strip(),
+        }
+
+    @staticmethod
+    def pick_hf_filename(files: list[str], requested: str = "", quant: str = "") -> str | None:
+        names = [item for item in files if item.lower().endswith(".gguf")]
+        if requested:
+            if requested in names:
+                return requested
+            lower = requested.lower()
+            hits = [item for item in names if item.lower() == lower or item.lower().endswith("/" + lower)]
+            if len(hits) == 1:
+                return hits[0]
+        tag = (quant or "").strip().upper()
+        if tag:
+            suffix = f"-{tag}.GGUF"
+            hits = [item for item in names if item.upper().endswith(suffix)]
+            if len(hits) == 1:
+                return hits[0]
+            if requested:
+                stripped = requested
+                for extra in ("-GGUF-", "_GGUF_"):
+                    stripped = stripped.replace(f"{extra}{tag}.gguf", f"-{tag}.gguf").replace(
+                        f"{extra}{tag}.GGUF", f"-{tag}.gguf"
+                    )
+                if stripped in names:
+                    return stripped
+                fuzzy = [item for item in names if item.lower().endswith(f"-{tag.lower()}.gguf") and item.split("/")[-1] in requested]
+                if len(fuzzy) == 1:
+                    return fuzzy[0]
+        return None
+
+    @staticmethod
+    def hf_url(repo: str, filename: str, revision: str = "main") -> str:
+        return f"https://huggingface.co/{repo}/resolve/{revision or 'main'}/{filename}"
 
     @staticmethod
     def list_models_command(model_dir: str) -> str:
@@ -170,7 +252,55 @@ class LlamaCppEngine:
         header = f"-H {shlex.quote('Authorization: Bearer ' + token)} " if token else ""
         return (
             f"mkdir -p {shlex.quote(model_dir)} && "
-            f"curl -L --fail {header}-o {shlex.quote(dest)} {shlex.quote(url)}"
+            f"curl -fsSL {header}-o {shlex.quote(dest)} {shlex.quote(url)}"
+        )
+
+    @staticmethod
+    def start_download_command(model_dir: str, filename: str, url: str, job_id: str, token: str = "") -> str:
+        dest = f"{model_dir.rstrip('/')}/{filename}"
+        part = f"{dest}.part"
+        job_dir = f"~/.platformai/downloads/{job_id}"
+        header = f"-H {shlex.quote('Authorization: Bearer ' + token)} " if token else ""
+        inner = (
+            f"curl -L --fail -sS {header}-o {shlex.quote(part)} {shlex.quote(url)}; "
+            f"ec=$?; echo $ec > {shlex.quote(job_dir)}/exit; "
+            f"if [ \"$ec\" -eq 0 ]; then mv {shlex.quote(part)} {shlex.quote(dest)}; fi"
+        )
+        return (
+            f"mkdir -p {shlex.quote(model_dir)} {shlex.quote(job_dir)}; "
+            f"nohup /bin/bash -lc {shlex.quote(inner)} "
+            f"> {shlex.quote(job_dir)}/curl.log 2>&1 & "
+            f"echo $! | tee {shlex.quote(job_dir)}/pid"
+        )
+
+    @staticmethod
+    def download_progress_command(model_dir: str, filename: str, job_id: str) -> str:
+        dest = f"{model_dir.rstrip('/')}/{filename}"
+        part = f"{dest}.part"
+        job_dir = f"~/.platformai/downloads/{job_id}"
+        return (
+            f"pid=''; [ -f {shlex.quote(job_dir)}/pid ] && pid=$(cat {shlex.quote(job_dir)}/pid); "
+            "alive=0; if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then alive=1; fi; "
+            f"ex=''; [ -f {shlex.quote(job_dir)}/exit ] && ex=$(cat {shlex.quote(job_dir)}/exit); "
+            "size=0; done=0; "
+            f"if [ -f {shlex.quote(dest)} ]; then "
+            f"size=$(stat -f%z {shlex.quote(dest)} 2>/dev/null || stat -c%s {shlex.quote(dest)}); done=1; "
+            f"elif [ -f {shlex.quote(part)} ]; then "
+            f"size=$(stat -f%z {shlex.quote(part)} 2>/dev/null || stat -c%s {shlex.quote(part)}); fi; "
+            f"err=''; [ -f {shlex.quote(job_dir)}/curl.log ] && err=$(tail -n 1 {shlex.quote(job_dir)}/curl.log); "
+            "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$alive\" \"$ex\" \"$size\" \"$done\" \"$err\""
+        )
+
+    @staticmethod
+    def cancel_download_command(model_dir: str, filename: str, job_id: str) -> str:
+        dest = f"{model_dir.rstrip('/')}/{filename}"
+        part = f"{dest}.part"
+        job_dir = f"~/.platformai/downloads/{job_id}"
+        return (
+            f"if [ -f {shlex.quote(job_dir)}/pid ]; then "
+            f"pid=$(cat {shlex.quote(job_dir)}/pid); "
+            "kill \"$pid\" 2>/dev/null; sleep 0.2; kill -9 \"$pid\" 2>/dev/null; fi; "
+            f"rm -f {shlex.quote(part)}; echo CANCELLED"
         )
 
     @staticmethod

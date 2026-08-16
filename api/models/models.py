@@ -102,6 +102,8 @@ class NodeIn(BaseModel):
     listenHost: str = "0.0.0.0"
     listenPort: int = 8080
     modelDir: str = "~/models"
+    llamaServerPath: str = ""
+    selectedModel: str = ""
     serverParams: ServerParams = Field(default_factory=ServerParams)
 
 
@@ -122,11 +124,13 @@ class NodeUpdate(BaseModel):
     listenHost: Optional[str] = None
     listenPort: Optional[int] = None
     modelDir: Optional[str] = None
+    llamaServerPath: Optional[str] = None
+    selectedModel: Optional[str] = None
     serverParams: Optional[ServerParams] = None
 
 
 class StartEngineIn(BaseModel):
-    modelFilename: str
+    modelFilename: Optional[str] = None
 
 
 class DownloadModelIn(BaseModel):
@@ -149,9 +153,12 @@ class ChatMessage(BaseModel):
 class ChatIn(BaseModel):
     model: str
     messages: List[ChatMessage]
-    temperature: Optional[float] = None
-    topP: Optional[float] = None
-    topK: Optional[int] = None
+    temperature: Optional[float] = 1.0
+    topP: Optional[float] = 0.95
+    topK: Optional[int] = 20
+    minP: Optional[float] = 0.0
+    presencePenalty: Optional[float] = 0.0
+    repetitionPenalty: Optional[float] = 1.0
     maxTokens: Optional[int] = None
 
 

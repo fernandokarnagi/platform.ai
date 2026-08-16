@@ -11,6 +11,16 @@ class SshError(Exception):
     pass
 
 
+def _exc_text(exc: Exception) -> str:
+    text = str(exc).strip()
+    if text:
+        return text
+    name = type(exc).__name__
+    if name == "TimeoutError":
+        return "connection timed out"
+    return name
+
+
 @dataclass
 class SshResult:
     stdout: str
@@ -29,7 +39,7 @@ async def _run_local(command: str, timeout: float) -> SshResult:
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except Exception as exc:
-        raise SshError(str(exc)) from exc
+        raise SshError(_exc_text(exc)) from exc
     return SshResult(
         stdout=(stdout or b"").decode(errors="replace"),
         stderr=(stderr or b"").decode(errors="replace"),
@@ -57,9 +67,14 @@ async def run_command(node: dict, command: str, timeout: float = 30.0) -> SshRes
         else:
             connect_kwargs["password"] = node.get("sshPassword") or ""
         async with asyncssh.connect(**connect_kwargs) as conn:
-            result = await conn.run(command, check=False, timeout=timeout)
+            # Non-interactive ssh has no Homebrew PATH. Login zsh does.
+            remote = (
+                'export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"; '
+                + command
+            )
+            result = await conn.run(remote, check=False, timeout=timeout)
     except Exception as exc:
-        raise SshError(str(exc)) from exc
+        raise SshError(_exc_text(exc)) from exc
     return SshResult(
         stdout=str(result.stdout or ""),
         stderr=str(result.stderr or ""),

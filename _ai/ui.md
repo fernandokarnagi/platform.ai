@@ -15,10 +15,13 @@ Tokens and shared classes live in `ui/index.css`.
 | Path | Screen |
 |---|---|
 | `/` | Cluster list |
-| `/clusters/:id` | Cluster detail (nodes table + probes) |
+| `/clusters/:id` | Cluster detail (nodes table from 30 min status cache; click a row to open the node; Refresh forces a full live probe) |
 | `/clusters/:id/nodes/new` | Register node |
-| `/nodes/:id` | Node detail — chat 75% left; combined status/engine + models on the right |
+| `/nodes/:id` | Node detail — opens from status/models cache (no live SSH); Check on SSH / Engine / OpenAI for an on-demand probe; Refresh forces live status + GGUF list; llama-server log hidden until Show logs |
+
+Pages use `width: 100%` and `max-width: 2000px`.
 | `/nodes/:id/edit` | Edit node |
+| `/downloads` | Background model download progress |
 
 No login screen.
 
@@ -32,7 +35,7 @@ Edit and delete live on the detail page only. Cluster list and the node table ha
 
 ## Node form
 
-Sections: Identity, SSH (or local note), OpenAI, Server, Load, Advanced, Extra flags, Command preview, Setup (after save).
+Sections: Identity, SSH (or local note), OpenAI, Server (listen + model dir + optional llama-server path), Load, Advanced, Extra flags, Command preview, Setup (after save).
 
 See [[local-vs-ssh]] for the localhost path.
 

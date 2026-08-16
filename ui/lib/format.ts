@@ -12,7 +12,7 @@ function parseInstant(iso: string): Date {
   return new Date(trimmed);
 }
 
-function formatInSgt(date: Date): string {
+function formatInSgt(date: Date, seconds = false): string {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: SGT,
     day: '2-digit',
@@ -20,19 +20,23 @@ function formatInSgt(date: Date): string {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    second: seconds ? '2-digit' : undefined,
     hour12: false,
   }).formatToParts(date);
   const get = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? '';
-  return `${get('day')}-${get('month')}-${get('year')} ${get('hour')}:${get('minute')}`;
+  const time = seconds
+    ? `${get('hour')}:${get('minute')}:${get('second')}`
+    : `${get('hour')}:${get('minute')}`;
+  return `${get('day')}-${get('month')}-${get('year')} ${time}`;
 }
 
 /** DD-MMM-YYYY HH:mm in SGT, e.g. 16-Aug-2026 14:05 */
-export function formatDateTime(iso: string | null | undefined): string {
+export function formatDateTime(iso: string | null | undefined, options?: { seconds?: boolean }): string {
   if (!iso) return '—';
   const date = parseInstant(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return formatInSgt(date);
+  return formatInSgt(date, Boolean(options?.seconds));
 }
 
 /** File mtime from `stat` is already a wall clock on the node (usually SGT). */

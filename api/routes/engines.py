@@ -14,7 +14,7 @@ async def preview_llama_cpp(payload: PreviewIn):
         "serverParams": payload.serverParams.model_dump(),
     }
     try:
-        argv = LlamaCppEngine.build_argv(node, payload.modelFilename, payload.modelDir)
+        argv = LlamaCppEngine.build_argv(node, payload.modelDir)
     except ForbiddenExtraFlagsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:

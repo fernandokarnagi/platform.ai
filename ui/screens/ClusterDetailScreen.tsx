@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import ErrorBanner from '@components/ErrorBanner';
+import SuccessModal from '@components/SuccessModal';
+import ModelRadios from '@components/ModelRadios';
 import StatusIcon from '@components/StatusIcon';
+import { usefulDetail } from '@/lib/errors';
 import { useClusters } from '@contexts/ClusterContext';
 import { clusterService } from '@services/clusterService';
 import { nodeService } from '@services/nodeService';
-import { formatDateTime } from '@/lib/format';
-import type { Cluster, EngineStatus, LastOpenAICheck, Node, NodeStatus } from '@/types';
+import type { Cluster, EngineStatus, Node, NodeStatus } from '@/types';
 
 interface NodeProbe {
   status: NodeStatus;
@@ -21,14 +23,16 @@ function Modal({
   title,
   children,
   onClose,
+  wide,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  wide?: boolean;
 }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(event) => event.stopPropagation()}>
+      <div className={`modal${wide ? ' modal-wide' : ''}`} onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
           <span>{title}</span>
           <button type="button" onClick={onClose} className="modal-x">
@@ -41,24 +45,24 @@ function Modal({
   );
 }
 
-function OpenAIStatus({
-  live,
-  stored,
-}: {
-  live: NodeStatus | null;
-  stored: LastOpenAICheck | null;
-}) {
-  const openai = live?.openai ?? stored?.openai;
-  const checkedAt = live?.checkedAt ?? stored?.checkedAt;
-  if (!openai) {
-    return <span className="muted">Not checked</span>;
-  }
-  return (
-    <span className="status-cell">
-      <StatusIcon kind={openai === 'up' ? 'up' : 'down'} />
-      <span className="muted">{formatDateTime(checkedAt)}</span>
-    </span>
-  );
+function probeFromNode(node: Node): NodeProbe | null {
+  const cache = node.statusCache;
+  if (!cache) return null;
+  return {
+    status: {
+      ssh: cache.ssh,
+      openai: cache.openai,
+      models: cache.models,
+      detail: cache.detail ?? null,
+      checkedAt: cache.checkedAt,
+      cached: true,
+    },
+    engine: {
+      running: cache.running,
+      pid: cache.pid,
+      lastStart: node.lastStart,
+    },
+  };
 }
 
 export default function ClusterDetailScreen() {
@@ -71,13 +75,24 @@ export default function ClusterDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const probeNodes = useCallback(async (nodeList: Node[]) => {
+  const applyCachedProbes = useCallback((nodeList: Node[]) => {
+    const next: Record<string, NodeProbe> = {};
+    for (const node of nodeList) {
+      const probe = probeFromNode(node);
+      if (probe) next[node.id] = probe;
+    }
+    setProbes(next);
+  }, []);
+
+  const probeNodes = useCallback(async (nodeList: Node[], refresh = false) => {
+    if (nodeList.length === 0) return;
     setProbing(true);
     const next: Record<string, NodeProbe> = {};
     const details: string[] = [];
@@ -89,34 +104,30 @@ export default function ClusterDetailScreen() {
 
     await Promise.all(
       nodeList.map(async (node) => {
-        const [statusRes, engineRes] = await Promise.allSettled([
-          nodeService.status(node.id),
-          nodeService.engine(node.id),
-        ]);
-
         let status: NodeStatus;
-        if (statusRes.status === 'fulfilled') {
-          status = statusRes.value;
-          if (status.ssh === 'down' && status.detail) {
-            addDetail(node.name, status.detail);
+        try {
+          status = await nodeService.status(node.id, refresh);
+          const statusDetail = usefulDetail(status.detail);
+          if (status.ssh === 'down' && statusDetail) {
+            addDetail(node.name, statusDetail);
           }
-        } else {
-          const detail = errorMessage(statusRes.reason);
+        } catch (err) {
+          const detail = errorMessage(err);
           status = { ssh: 'down', openai: 'down', models: [], detail };
           addDetail(node.name, detail);
         }
 
-        let engine: EngineStatus | null = null;
-        if (engineRes.status === 'fulfilled') {
-          engine = engineRes.value;
-        } else {
-          addDetail(node.name, errorMessage(engineRes.reason));
-        }
-
-        next[node.id] = { status, engine };
+        next[node.id] = {
+          status,
+          engine: {
+            running: Boolean(status.running),
+            pid: status.pid ?? null,
+            lastStart: node.lastStart,
+          },
+        };
       }),
     );
-    setProbes(next);
+    setProbes((current) => ({ ...current, ...next }));
     setError(details.length ? details.join(' · ') : null);
     setProbing(false);
   }, []);
@@ -136,14 +147,15 @@ export default function ClusterDetailScreen() {
       ]);
       setCluster(clusterData);
       setNodes(nodeList);
-      await probeNodes(nodeList);
-      setNodes(await nodeService.listByCluster(id));
+      applyCachedProbes(nodeList);
+      const stale = nodeList.filter((node) => !node.statusCache?.fresh);
+      if (stale.length) void probeNodes(stale, false);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [id, probeNodes]);
+  }, [id, applyCachedProbes, probeNodes]);
 
   useEffect(() => {
     void load();
@@ -155,7 +167,8 @@ export default function ClusterDetailScreen() {
     try {
       const nodeList = await nodeService.listByCluster(id);
       setNodes(nodeList);
-      await probeNodes(nodeList);
+      applyCachedProbes(nodeList);
+      await probeNodes(nodeList, true);
       setNodes(await nodeService.listByCluster(id));
     } catch (err) {
       setError(errorMessage(err));
@@ -168,6 +181,7 @@ export default function ClusterDetailScreen() {
     setEditDescription(cluster.description ?? '');
     setEditing(true);
     setError(null);
+    setNotice(null);
   }
 
   async function handleEdit(event: FormEvent) {
@@ -188,6 +202,7 @@ export default function ClusterDetailScreen() {
       setCluster(updated);
       setEditing(false);
       await refresh();
+      setNotice(`Cluster "${trimmed}" saved`);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -262,6 +277,7 @@ export default function ClusterDetailScreen() {
       </div>
 
       {error ? <ErrorBanner message={error} /> : null}
+      {notice ? <SuccessModal message={notice} onClose={() => setNotice(null)} /> : null}
 
       <div className="table-wrap">
         <table className="data-table">
@@ -293,7 +309,7 @@ export default function ClusterDetailScreen() {
             {!loading
               ? nodes.map((node) => {
                   const probe = probes[node.id];
-                  const currentModel = probe?.status.models.join(', ') || '—';
+                  const models = probe?.status.models ?? node.statusCache?.models ?? node.lastOpenAICheck?.models ?? [];
                   return (
                     <tr key={node.id} className="clickable" onClick={() => navigate(`/nodes/${node.id}`)}>
                       <td>{node.name}</td>
@@ -313,12 +329,21 @@ export default function ClusterDetailScreen() {
                         )}
                       </td>
                       <td>
-                        <OpenAIStatus
-                          live={probe?.status ?? null}
-                          stored={node.lastOpenAICheck}
-                        />
+                        {probe ? (
+                          <StatusIcon kind={probe.status.openai === 'up' ? 'up' : 'down'} />
+                        ) : node.lastOpenAICheck ? (
+                          <StatusIcon kind={node.lastOpenAICheck.openai === 'up' ? 'up' : 'down'} />
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
                       </td>
-                      <td className="muted">{probe ? currentModel : '…'}</td>
+                      <td className="muted">
+                        {probe || node.statusCache || node.lastOpenAICheck ? (
+                          <ModelRadios models={models} />
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })
@@ -328,7 +353,7 @@ export default function ClusterDetailScreen() {
       </div>
 
       {editing ? (
-        <Modal title="Edit cluster" onClose={() => setEditing(false)}>
+        <Modal title="Edit cluster" wide onClose={() => setEditing(false)}>
           <form onSubmit={(event) => void handleEdit(event)}>
             <label>
               <span className="field-label">Name</span>
@@ -341,11 +366,12 @@ export default function ClusterDetailScreen() {
             </label>
             <label>
               <span className="field-label">Description</span>
-              <input
+              <textarea
                 value={editDescription}
                 onChange={(event) => setEditDescription(event.target.value)}
                 className="field-input"
                 placeholder="optional"
+                rows={4}
               />
             </label>
             <div className="modal-actions">

@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ErrorBanner from '@components/ErrorBanner';
+import SuccessModal from '@components/SuccessModal';
 import { useClusters } from '@contexts/ClusterContext';
 import { clusterService } from '@services/clusterService';
 import { formatDateTime } from '@/lib/format';
@@ -40,12 +41,14 @@ export default function ClustersScreen() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   function openCreate() {
     setName('');
     setDescription('');
     setCreating(true);
     setError(null);
+    setNotice(null);
   }
 
   async function handleCreate(event: FormEvent) {
@@ -63,8 +66,11 @@ export default function ClustersScreen() {
         description: description.trim(),
       });
       setCreating(false);
+      setError(null);
       await refresh();
+      setNotice(`Cluster "${trimmed}" created`);
     } catch (err) {
+      setNotice(null);
       setError(errorMessage(err));
     } finally {
       setSaving(false);
@@ -84,6 +90,7 @@ export default function ClustersScreen() {
       </div>
 
       {error ? <ErrorBanner message={error} /> : null}
+      {notice ? <SuccessModal message={notice} onClose={() => setNotice(null)} /> : null}
 
       <div className="table-wrap">
         <table className="data-table">

@@ -14,7 +14,9 @@ class FakeResult:
 async def test_test_ssh_success(app, monkeypatch):
     async def fake_run(node, command, timeout=30.0):
         if "uname" in command:
-            return FakeResult("Darwin\n/opt/homebrew/bin/llama-server\n")
+            return FakeResult("Darwin\n")
+        if "llama-server" in command:
+            return FakeResult("/opt/homebrew/bin/llama-server\n")
         return FakeResult("")
 
     monkeypatch.setattr(ssh_mod, "run_command", fake_run)
@@ -61,6 +63,11 @@ async def test_test_ssh_failure(app, monkeypatch):
         response = await client.post(f"/nodes/{node['id']}/test-ssh")
         assert response.status_code == 502
         assert response.json()["detail"].startswith("SSH failed:")
+
+
+def test_timeout_error_message_is_not_empty():
+    assert ssh_mod._exc_text(TimeoutError()) == "connection timed out"
+    assert ssh_mod._exc_text(TimeoutError("x")) == "x"
 
 
 @pytest.mark.asyncio

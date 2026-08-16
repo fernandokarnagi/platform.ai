@@ -107,6 +107,8 @@ def test_node_helper_includes_ssh_secrets():
     assert out["sshPassword"] == "secret"
     assert out["clusterId"] == str(cluster_id)
     assert out["lastOpenAICheck"] is None
+    assert out["statusCache"] is None
+    assert out["modelsCache"] is None
 
 
 def test_node_helper_serialises_last_openai_check():
@@ -127,6 +129,30 @@ def test_node_helper_serialises_last_openai_check():
     })
     assert out["lastOpenAICheck"]["openai"] == "up"
     assert out["lastOpenAICheck"]["checkedAt"].startswith("2026-08-16")
+
+
+def test_node_helper_serialises_status_cache():
+    oid = ObjectId()
+    out = node_helper({
+        "_id": oid,
+        "clusterId": ObjectId(),
+        "name": "n",
+        "host": "localhost",
+        "statusCache": {
+            "ssh": "up",
+            "openai": "up",
+            "running": True,
+            "pid": "99",
+            "models": ["phi"],
+            "detail": None,
+            "checkedAt": datetime(2026, 8, 16, 18, 0),
+        },
+        "createdAt": datetime(2026, 8, 16),
+        "updatedAt": datetime(2026, 8, 16),
+    })
+    assert out["statusCache"]["running"] is True
+    assert out["statusCache"]["pid"] == "99"
+    assert out["statusCache"]["checkedAt"].startswith("2026-08-16")
 
 
 def test_safe_model_filename_rejects_escape():

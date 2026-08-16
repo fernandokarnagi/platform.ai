@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import ErrorBanner from '@components/ErrorBanner';
+import ModelRadios from '@components/ModelRadios';
 import StatusIcon from '@components/StatusIcon';
 import { useClusters } from '@contexts/ClusterContext';
+import { usefulDetail } from '@/lib/errors';
 import { formatDateTime, formatFileTime } from '@/lib/format';
 import { nodeService } from '@services/nodeService';
 import type {
@@ -10,15 +12,25 @@ import type {
   ChatMessage,
   DownloadModelIn,
   EngineStatus,
+  HfRepoFile,
   Node,
   NodeStatus,
   RemoteModel,
+  StatusCheck,
 } from '@/types';
+
+type ChatTurn = ChatMessage & { at: string };
 
 const inputClass = 'field-input';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function newestFirst(text: string): string {
+  const lines = text.split('\n');
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines.reverse().join('\n');
 }
 
 function Section({
@@ -116,6 +128,7 @@ export default function NodeDetailScreen() {
   const [status, setStatus] = useState<NodeStatus | null>(null);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [models, setModels] = useState<RemoteModel[]>([]);
+  const [modelsKnown, setModelsKnown] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,33 +136,119 @@ export default function NodeDetailScreen() {
   const [busy, setBusy] = useState<
     'start' | 'stop' | 'restart' | 'download' | 'delete' | 'delete-node' | 'chat' | null
   >(null);
-
-  const [startOpen, setStartOpen] = useState(false);
-  const [startFilename, setStartFilename] = useState('');
-  const [startModelsLoading, setStartModelsLoading] = useState(false);
+  const [checking, setChecking] = useState<StatusCheck | null>(null);
 
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [downloadSource, setDownloadSource] = useState<'huggingface' | 'url'>('huggingface');
   const [downloadRepo, setDownloadRepo] = useState('');
   const [downloadFilename, setDownloadFilename] = useState('');
   const [downloadUrl, setDownloadUrl] = useState('');
-  const [downloadToken, setDownloadToken] = useState('');
+  const [hfFiles, setHfFiles] = useState<HfRepoFile[]>([]);
+  const [hfListError, setHfListError] = useState<string | null>(null);
+  const [hfListing, setHfListing] = useState(false);
 
   const [chatModel, setChatModel] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatTurn[]>([]);
+  const chatLogRef = useRef<HTMLDivElement | null>(null);
+  const [logText, setLogText] = useState('');
+  const [logMissing, setLogMissing] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
+  const [logFollow, setLogFollow] = useState(true);
+  const [logLoading, setLogLoading] = useState(false);
+  const logRef = useRef<HTMLPreElement | null>(null);
+
   const [draft, setDraft] = useState('');
-  const [temperature, setTemperature] = useState('');
-  const [topP, setTopP] = useState('');
-  const [topK, setTopK] = useState('');
+  const [temperature, setTemperature] = useState('1.0');
+  const [topP, setTopP] = useState('0.95');
+  const [topK, setTopK] = useState('20');
+  const [minP, setMinP] = useState('0.0');
+  const [presencePenalty, setPresencePenalty] = useState('0.0');
+  const [repetitionPenalty, setRepetitionPenalty] = useState('1.0');
   const [maxTokens, setMaxTokens] = useState('');
 
-  const applyStatus = useCallback((next: NodeStatus) => {
+  const applyStatus = useCallback((next: NodeStatus, preferred?: string) => {
     setStatus(next);
     setChatModel((current) => {
       if (current && next.models.includes(current)) return current;
+      if (preferred && next.models.includes(preferred)) return preferred;
       return next.models[0] ?? '';
     });
   }, []);
+
+  const applyNodeCaches = useCallback(
+    (nodeData: Node) => {
+      const cache = nodeData.statusCache;
+      if (cache) {
+        applyStatus(
+          {
+            ssh: cache.ssh,
+            openai: cache.openai,
+            models: cache.models,
+            detail: cache.detail ?? null,
+            checkedAt: cache.checkedAt,
+            cached: true,
+            running: cache.running,
+            pid: cache.pid,
+          },
+          nodeData.selectedModel,
+        );
+        setEngine({
+          running: cache.running,
+          pid: cache.pid,
+          lastStart: nodeData.lastStart,
+        });
+      }
+      if (nodeData.modelsCache) {
+        setModels(nodeData.modelsCache.items);
+        setModelsKnown(true);
+      }
+    },
+    [applyStatus],
+  );
+
+  const hydrate = useCallback(
+    async (live: boolean, doStatus: boolean, doModels: boolean) => {
+      if (!id) return;
+      const details: string[] = [];
+      const jobs: Array<Promise<void>> = [];
+      if (doStatus) {
+        jobs.push(
+          (async () => {
+            try {
+              const next = await nodeService.status(id, live);
+              applyStatus(next);
+              setEngine((current) => ({
+                running: Boolean(next.running),
+                pid: next.pid ?? null,
+                lastStart: current?.lastStart ?? null,
+              }));
+              const statusDetail = usefulDetail(next.detail);
+              if (statusDetail) details.push(statusDetail);
+            } catch (err) {
+              const detail = usefulDetail(errorMessage(err));
+              if (detail) details.push(detail);
+            }
+          })(),
+        );
+      }
+      if (doModels) {
+        jobs.push(
+          (async () => {
+            try {
+              setModels(await nodeService.listModels(id, live));
+              setModelsKnown(true);
+            } catch (err) {
+              const failed = usefulDetail(errorMessage(err));
+              if (failed) details.push(failed);
+            }
+          })(),
+        );
+      }
+      await Promise.all(jobs);
+      setError(details.length ? details.join(' · ') : null);
+    },
+    [id, applyStatus],
+  );
 
   const load = useCallback(
     async (mode: 'full' | 'refresh' = 'full') => {
@@ -161,41 +260,21 @@ export default function NodeDetailScreen() {
       if (mode === 'full') setLoading(true);
       else setRefreshing(true);
       setError(null);
+      setModelsKnown(false);
       try {
         const nodeData = await nodeService.get(id);
         setNode(nodeData);
-
-        const details: string[] = [];
-        const [statusRes, engineRes, modelsRes] = await Promise.allSettled([
-          nodeService.status(id),
-          nodeService.engine(id),
-          nodeService.listModels(id),
-        ]);
-
-        if (statusRes.status === 'fulfilled') {
-          applyStatus(statusRes.value);
-          if (statusRes.value.detail) details.push(statusRes.value.detail);
-        } else {
-          const detail = errorMessage(statusRes.reason);
-          applyStatus({ ssh: 'down', openai: 'down', models: [], detail });
-          details.push(detail);
+        applyNodeCaches(nodeData);
+        if (mode === 'full') {
+          setLoading(false);
+          const staleStatus = !nodeData.statusCache?.fresh;
+          const staleModels = !nodeData.modelsCache?.fresh;
+          if (staleStatus || staleModels) {
+            void hydrate(false, staleStatus, staleModels);
+          }
+          return;
         }
-
-        if (engineRes.status === 'fulfilled') {
-          setEngine(engineRes.value);
-        } else {
-          setEngine(null);
-          details.push(errorMessage(engineRes.reason));
-        }
-
-        if (modelsRes.status === 'fulfilled') {
-          setModels(modelsRes.value);
-        } else {
-          setModels([]);
-          details.push(errorMessage(modelsRes.reason));
-        }
-
-        setError(details.length ? details.join(' · ') : null);
+        await hydrate(true, true, true);
       } catch (err) {
         setError(errorMessage(err));
       } finally {
@@ -203,73 +282,89 @@ export default function NodeDetailScreen() {
         setRefreshing(false);
       }
     },
-    [id, applyStatus],
+    [id, applyNodeCaches, hydrate],
   );
 
   useEffect(() => {
     void load('full');
   }, [load]);
 
+  const fetchLogs = useCallback(async () => {
+    if (!id) return;
+    setLogLoading(true);
+    try {
+      const logs = await nodeService.logs(id);
+      setLogText(logs.missing ? logs.text : newestFirst(logs.text));
+      setLogMissing(logs.missing);
+    } catch (err) {
+      setLogText(errorMessage(err));
+      setLogMissing(false);
+    } finally {
+      setLogLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (!showLogs) return;
+    void fetchLogs();
+  }, [showLogs, fetchLogs]);
+
+  useEffect(() => {
+    if (!showLogs || !logFollow) return;
+    const timer = window.setInterval(() => {
+      void fetchLogs();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [showLogs, logFollow, fetchLogs]);
+
+  useEffect(() => {
+    if (!logFollow) return;
+    const el = logRef.current;
+    if (!el) return;
+    el.scrollTop = 0;
+  }, [logText, logFollow]);
+
   async function refreshAfterEngine(waitForOpenAI = false) {
     if (!id) return;
     const details: string[] = [];
-    try {
-      setEngine(await nodeService.engine(id));
-    } catch (err) {
-      details.push(errorMessage(err));
-    }
-
     const attempts = waitForOpenAI ? 5 : 1;
     let lastStatus: NodeStatus | undefined;
     let lastStatusError: string | undefined;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (attempt > 0) await sleep(1000);
       try {
-        lastStatus = await nodeService.status(id);
+        lastStatus = await nodeService.status(id, true);
         lastStatusError = undefined;
         applyStatus(lastStatus);
+        setEngine((current) => ({
+          running: Boolean(lastStatus?.running),
+          pid: lastStatus?.pid ?? null,
+          lastStart: current?.lastStart ?? node?.lastStart ?? null,
+        }));
         if (!waitForOpenAI || lastStatus.openai === 'up') break;
       } catch (err) {
         lastStatusError = errorMessage(err);
       }
     }
 
-    if (lastStatusError) details.push(lastStatusError);
-    else if (lastStatus?.detail) details.push(lastStatus.detail);
+    if (lastStatusError) {
+      const failed = usefulDetail(lastStatusError);
+      if (failed) details.push(failed);
+    } else {
+      const statusDetail = usefulDetail(lastStatus?.detail);
+      if (statusDetail) details.push(statusDetail);
+    }
     setError(details.length ? details.join(' · ') : null);
   }
 
-  async function openStart() {
+  async function handleStart() {
     if (!id) return;
-    setStartOpen(true);
-    setStartModelsLoading(true);
-    setError(null);
-    try {
-      const list = await nodeService.listModels(id);
-      setModels(list);
-      setStartFilename((current) => {
-        if (current && list.some((item) => item.name === current)) return current;
-        return list[0]?.name ?? '';
-      });
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setStartModelsLoading(false);
-    }
-  }
-
-  async function handleStart(event: FormEvent) {
-    event.preventDefault();
-    if (!id || !startFilename) {
-      setError('Pick a GGUF to start');
-      return;
-    }
     setBusy('start');
     setError(null);
     try {
-      setEngine(await nodeService.start(id, startFilename));
-      setStartOpen(false);
+      setEngine(await nodeService.start(id));
       await refreshAfterEngine(true);
+      await fetchLogs();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -284,6 +379,7 @@ export default function NodeDetailScreen() {
     try {
       setEngine(await nodeService.stop(id));
       await refreshAfterEngine();
+      await fetchLogs();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -298,6 +394,7 @@ export default function NodeDetailScreen() {
     try {
       setEngine(await nodeService.restart(id));
       await refreshAfterEngine(true);
+      await fetchLogs();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -310,10 +407,54 @@ export default function NodeDetailScreen() {
     setDownloadRepo('');
     setDownloadFilename('');
     setDownloadUrl('');
-    setDownloadToken('');
+    setHfFiles([]);
+    setHfListError(null);
     setDownloadOpen(true);
     setError(null);
   }
+
+  useEffect(() => {
+    if (!downloadOpen || downloadSource !== 'huggingface' || !id) return;
+    const repo = downloadRepo.trim();
+    if (!repo.includes('/')) {
+      setHfFiles([]);
+      setHfListError(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setHfListing(true);
+        setHfListError(null);
+        try {
+          const listed = await nodeService.listHfFiles(id, repo);
+          if (cancelled) return;
+          setHfFiles(listed.files);
+          setDownloadFilename((current) => {
+            if (current && listed.files.some((item) => item.name === current || item.name.endsWith(`/${current}`))) {
+              return current;
+            }
+            const tag = (listed.quant || '').toUpperCase();
+            if (tag) {
+              const match = listed.files.find((item) => item.name.toUpperCase().endsWith(`-${tag}.GGUF`));
+              if (match) return match.name;
+            }
+            return listed.files[0]?.name ?? '';
+          });
+        } catch (err) {
+          if (cancelled) return;
+          setHfFiles([]);
+          setHfListError(errorMessage(err));
+        } finally {
+          if (!cancelled) setHfListing(false);
+        }
+      })();
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [downloadOpen, downloadSource, downloadRepo, id]);
 
   async function handleDownload(event: FormEvent) {
     event.preventDefault();
@@ -324,31 +465,27 @@ export default function NodeDetailScreen() {
             source: 'huggingface',
             repo: downloadRepo.trim(),
             filename: downloadFilename.trim(),
-            hfToken: downloadToken.trim() || undefined,
           }
         : {
             source: 'url',
             url: downloadUrl.trim(),
             filename: downloadFilename.trim() || undefined,
           };
-    if (payload.source === 'huggingface' && (!payload.repo || !payload.filename)) {
-      setError('Hugging Face repo and filename are required');
+    if (payload.source === 'huggingface' && !payload.repo) {
+      setError('Hugging Face repo is required');
       return;
     }
     if (payload.source === 'url' && !payload.url) {
       setError('URL is required');
       return;
     }
-    setBusy('download');
     setError(null);
     try {
       await nodeService.downloadModel(id, payload);
       setDownloadOpen(false);
-      setModels(await nodeService.listModels(id));
+      navigate('/downloads');
     } catch (err) {
       setError(errorMessage(err));
-    } finally {
-      setBusy(null);
     }
   }
 
@@ -394,32 +531,32 @@ export default function NodeDetailScreen() {
     const temp = parseOptionalNumber(temperature, 'temperature');
     const p = parseOptionalNumber(topP, 'topP');
     const k = parseOptionalInt(topK, 'topK');
+    const min = parseOptionalNumber(minP, 'minP');
+    const presence = parseOptionalNumber(presencePenalty, 'presencePenalty');
+    const repeat = parseOptionalNumber(repetitionPenalty, 'repetitionPenalty');
     const tokens = parseOptionalInt(maxTokens, 'maxTokens');
-    if (!temp.ok) {
-      setError(temp.error);
-      return;
-    }
-    if (!p.ok) {
-      setError(p.error);
-      return;
-    }
-    if (!k.ok) {
-      setError(k.error);
-      return;
-    }
-    if (!tokens.ok) {
-      setError(tokens.error);
+    const parsed = [temp, p, k, min, presence, repeat, tokens];
+    const failed = parsed.find((item) => !item.ok);
+    if (failed && !failed.ok) {
+      setError(failed.error);
       return;
     }
 
     const previousDraft = draft;
     const previousMessages = messages;
-    const nextMessages: ChatMessage[] = [...previousMessages, { role: 'user', content: text }];
-    const payload: ChatIn = { model: chatModel, messages: nextMessages };
-    if (temp.value !== undefined) payload.temperature = temp.value;
-    if (p.value !== undefined) payload.topP = p.value;
-    if (k.value !== undefined) payload.topK = k.value;
-    if (tokens.value !== undefined) payload.maxTokens = tokens.value;
+    const userTurn: ChatTurn = { role: 'user', content: text, at: new Date().toISOString() };
+    const nextMessages = [...previousMessages, userTurn];
+    const payload: ChatIn = {
+      model: chatModel,
+      messages: nextMessages.map(({ role, content }) => ({ role, content })),
+    };
+    if (temp.ok && temp.value !== undefined) payload.temperature = temp.value;
+    if (p.ok && p.value !== undefined) payload.topP = p.value;
+    if (k.ok && k.value !== undefined) payload.topK = k.value;
+    if (min.ok && min.value !== undefined) payload.minP = min.value;
+    if (presence.ok && presence.value !== undefined) payload.presencePenalty = presence.value;
+    if (repeat.ok && repeat.value !== undefined) payload.repetitionPenalty = repeat.value;
+    if (tokens.ok && tokens.value !== undefined) payload.maxTokens = tokens.value;
 
     setMessages(nextMessages);
     setDraft('');
@@ -427,7 +564,10 @@ export default function NodeDetailScreen() {
     setError(null);
     try {
       const reply = await nodeService.chat(id, payload);
-      setMessages([...nextMessages, { role: 'assistant', content: assistantContent(reply) }]);
+      setMessages([
+        ...nextMessages,
+        { role: 'assistant', content: assistantContent(reply), at: new Date().toISOString() },
+      ]);
     } catch (err) {
       setMessages(previousMessages);
       setDraft(previousDraft);
@@ -437,9 +577,40 @@ export default function NodeDetailScreen() {
     }
   }
 
+  useEffect(() => {
+    const el = chatLogRef.current;
+    if (!el) return;
+    el.scrollTop = 0;
+  }, [messages]);
+
+  function handleClearChat() {
+    setMessages([]);
+  }
+
+  async function handleCheck(part: StatusCheck) {
+    if (!id) return;
+    setChecking(part);
+    setError(null);
+    try {
+      const next = await nodeService.status(id, false, part);
+      applyStatus(next);
+      setEngine((current) => ({
+        running: Boolean(next.running),
+        pid: next.pid ?? null,
+        lastStart: current?.lastStart ?? node?.lastStart ?? null,
+      }));
+      setError(usefulDetail(next.detail));
+    } catch (err) {
+      setError(usefulDetail(errorMessage(err)));
+    } finally {
+      setChecking(null);
+    }
+  }
+
   const running = Boolean(engine?.running);
   const backTo = node ? `/clusters/${node.clusterId}` : '/';
   const served = status?.models ?? [];
+  const visibleMessages = [...messages].reverse();
 
   return (
     <div className="page page-wide space-y-5">
@@ -467,6 +638,13 @@ export default function NodeDetailScreen() {
             >
               {refreshing ? 'Refreshing…' : 'Refresh'}
             </button>
+            <button
+              type="button"
+              className={showLogs ? 'toggle accent' : 'toggle'}
+              onClick={() => setShowLogs((current) => !current)}
+            >
+              {showLogs ? 'Hide logs' : 'Show logs'}
+            </button>
             {id ? (
               <Link to={`/nodes/${id}/edit`} className="toggle accent">
                 Edit node
@@ -491,8 +669,21 @@ export default function NodeDetailScreen() {
       {loading ? <p className="muted">Loading…</p> : null}
 
       {!loading ? (
-        <div className="node-layout">
-          <Section title="Chat" className="node-chat">
+        <div className={showLogs ? 'node-layout with-logs' : 'node-layout'}>
+          <Section
+            title="Chat"
+            className="node-chat"
+            actions={
+              <button
+                type="button"
+                className="toggle"
+                disabled={messages.length === 0 || busy !== null}
+                onClick={handleClearChat}
+              >
+                Clear chat
+              </button>
+            }
+          >
             <form className="chat-compose" onSubmit={(event) => void handleChat(event)}>
               <div className="chat-params">
                 <label className="chat-model">
@@ -511,35 +702,56 @@ export default function NodeDetailScreen() {
                     ))}
                   </select>
                 </label>
-                <label>
+                <label title="temperature">
                   <span className="field-label">Temp</span>
                   <input
                     value={temperature}
                     onChange={(event) => setTemperature(event.target.value)}
                     className={inputClass}
-                    placeholder="opt"
                   />
                 </label>
-                <label>
+                <label title="top_p">
                   <span className="field-label">topP</span>
                   <input
                     value={topP}
                     onChange={(event) => setTopP(event.target.value)}
                     className={inputClass}
-                    placeholder="opt"
                   />
                 </label>
-                <label>
+                <label title="top_k">
                   <span className="field-label">topK</span>
                   <input
                     value={topK}
                     onChange={(event) => setTopK(event.target.value)}
                     className={inputClass}
-                    placeholder="opt"
                   />
                 </label>
-                <label>
-                  <span className="field-label">maxTokens</span>
+                <label title="min_p">
+                  <span className="field-label">minP</span>
+                  <input
+                    value={minP}
+                    onChange={(event) => setMinP(event.target.value)}
+                    className={inputClass}
+                  />
+                </label>
+                <label title="presence_penalty">
+                  <span className="field-label">pres</span>
+                  <input
+                    value={presencePenalty}
+                    onChange={(event) => setPresencePenalty(event.target.value)}
+                    className={inputClass}
+                  />
+                </label>
+                <label title="repetition_penalty">
+                  <span className="field-label">rep</span>
+                  <input
+                    value={repetitionPenalty}
+                    onChange={(event) => setRepetitionPenalty(event.target.value)}
+                    className={inputClass}
+                  />
+                </label>
+                <label title="max_tokens">
+                  <span className="field-label">maxTok</span>
                   <input
                     value={maxTokens}
                     onChange={(event) => setMaxTokens(event.target.value)}
@@ -552,9 +764,16 @@ export default function NodeDetailScreen() {
                 <textarea
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
                   rows={2}
                   className={`${inputClass} flex-1`}
                   placeholder="Message"
+                  title="⌘Enter or Ctrl+Enter to send"
                 />
                 <button
                   type="submit"
@@ -566,19 +785,51 @@ export default function NodeDetailScreen() {
               </div>
             </form>
             <hr className="chat-rule" />
-            <div className="chat-log">
-              {messages.length === 0 ? (
+            <div ref={chatLogRef} className="chat-log">
+              {visibleMessages.length === 0 ? (
                 <p className="muted">No messages yet. Send a turn after the engine is up.</p>
               ) : (
-                messages.map((message, index) => (
-                  <div key={`${message.role}-${index}`} className={`event ${message.role}`}>
-                    <div className="kind">{message.role}</div>
+                visibleMessages.map((message) => (
+                  <div key={`${message.at}-${message.role}`} className={`event ${message.role}`}>
+                    <div className="kind-row">
+                      <div className="kind">{message.role}</div>
+                      <div className="when">{formatDateTime(message.at, { seconds: true })}</div>
+                    </div>
                     <div className="body">{message.content}</div>
                   </div>
                 ))
               )}
             </div>
           </Section>
+
+          {showLogs ? (
+            <Section
+              title="llama-server log"
+              className="node-logs"
+              actions={
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={logFollow ? 'toggle accent' : 'toggle'}
+                    onClick={() => setLogFollow((current) => !current)}
+                  >
+                    {logFollow ? 'Following' : 'Follow'}
+                  </button>
+                  <button type="button" className="toggle" disabled={logLoading} onClick={() => void fetchLogs()}>
+                    {logLoading ? 'Reading…' : 'Refresh'}
+                  </button>
+                </div>
+              }
+            >
+              {logMissing ? (
+                <p className="muted">No log yet. Start the engine to create ~/.platformai/llama-server.log.</p>
+              ) : (
+                <pre ref={logRef} className="log-tail">
+                  {logText.trim() ? logText : logLoading ? 'Reading…' : 'Log is empty.'}
+                </pre>
+              )}
+            </Section>
+          ) : null}
 
           <div className="node-side">
             <Section
@@ -587,7 +838,7 @@ export default function NodeDetailScreen() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => void openStart()}
+                    onClick={() => void handleStart()}
                     disabled={running || busy !== null}
                     className="toggle accent"
                   >
@@ -617,33 +868,61 @@ export default function NodeDetailScreen() {
                   <dt className="stat-label">{node?.nodeType === 'local' ? 'Local' : 'SSH'}</dt>
                   <dd className="stat-value">
                     {status ? <StatusIcon kind={status.ssh === 'up' ? 'up' : 'down'} /> : <span className="muted">—</span>}
+                    <button
+                      type="button"
+                      className="toggle stat-check-btn"
+                      disabled={checking !== null || busy !== null}
+                      onClick={() => void handleCheck('ssh')}
+                    >
+                      {checking === 'ssh' ? 'Checking…' : 'Check'}
+                    </button>
                   </dd>
                 </div>
                 <div>
                   <dt className="stat-label">Engine</dt>
-                  <dd className="stat-value flex flex-wrap items-center gap-2">
-                    {engine ? <StatusIcon kind={engine.running ? 'running' : 'stopped'} /> : <span className="muted">—</span>}
-                    <span className="muted">pid {engine?.pid ?? '—'}</span>
+                  <dd className="stat-value">
+                    <span className="flex flex-wrap items-center gap-2">
+                      {engine ? <StatusIcon kind={engine.running ? 'running' : 'stopped'} /> : <span className="muted">—</span>}
+                      <span className="muted">pid {engine?.pid ?? '—'}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="toggle stat-check-btn"
+                      disabled={checking !== null || busy !== null}
+                      onClick={() => void handleCheck('engine')}
+                    >
+                      {checking === 'engine' ? 'Checking…' : 'Check'}
+                    </button>
                   </dd>
                 </div>
                 <div>
                   <dt className="stat-label">OpenAI</dt>
                   <dd className="stat-value">
                     {status ? <StatusIcon kind={status.openai === 'up' ? 'up' : 'down'} /> : <span className="muted">—</span>}
+                    <button
+                      type="button"
+                      className="toggle stat-check-btn"
+                      disabled={checking !== null || busy !== null}
+                      onClick={() => void handleCheck('openai')}
+                    >
+                      {checking === 'openai' ? 'Checking…' : 'Check'}
+                    </button>
                   </dd>
                 </div>
-                <div>
-                  <dt className="stat-label">Served models</dt>
-                  <dd className="stat-value">{served.length ? served.join(', ') : '—'}</dd>
-                </div>
               </dl>
+              <div>
+                <div className="stat-label">Served models</div>
+                <div className="stat-value">
+                  <ModelRadios models={served} />
+                </div>
+              </div>
               {engine?.lastStart ? (
                 <p className="muted">
-                  Last start {engine.lastStart.modelFilename}
+                  Last start --models-dir {node?.modelDir ?? '~/models'}
                   {engine.lastStart.startedAt ? ` · ${formatStamp(engine.lastStart.startedAt)}` : ''}
                 </p>
               ) : (
-                <p className="muted">No previous start. Pick a GGUF to launch llama-server.</p>
+                <p className="muted">No previous start. Start loads every GGUF in the model dir.</p>
               )}
             </Section>
 
@@ -660,7 +939,9 @@ export default function NodeDetailScreen() {
                 </button>
               }
             >
-              {models.length === 0 ? (
+              {!modelsKnown ? (
+                <p className="muted">Model dir not checked yet.</p>
+              ) : models.length === 0 ? (
                 <p className="muted">No GGUF files in {node?.modelDir ?? '~/models'}.</p>
               ) : (
                 <ul className="model-list">
@@ -687,38 +968,6 @@ export default function NodeDetailScreen() {
             </Section>
           </div>
         </div>
-      ) : null}
-
-      {startOpen ? (
-        <Modal title="Start llama-server" onClose={() => busy === null && setStartOpen(false)}>
-          <form onSubmit={(event) => void handleStart(event)}>
-            <label>
-              <span className="field-label">GGUF</span>
-              <select
-                value={startFilename}
-                onChange={(event) => setStartFilename(event.target.value)}
-                className={inputClass}
-                disabled={startModelsLoading || models.length === 0}
-              >
-                {startModelsLoading ? <option value="">Loading…</option> : null}
-                {!startModelsLoading && models.length === 0 ? <option value="">No GGUF files</option> : null}
-                {models.map((model) => (
-                  <option key={model.name} value={model.name}>
-                    {model.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="modal-actions">
-              <button type="button" onClick={() => setStartOpen(false)} disabled={busy !== null} className="toggle">
-                Cancel
-              </button>
-              <button type="submit" disabled={busy !== null || !startFilename} className="toggle accent">
-                {busy === 'start' ? 'Starting…' : 'Start'}
-              </button>
-            </div>
-          </form>
-        </Modal>
       ) : null}
 
       {downloadOpen ? (
@@ -753,30 +1002,35 @@ export default function NodeDetailScreen() {
                     value={downloadRepo}
                     onChange={(event) => setDownloadRepo(event.target.value)}
                     className={inputClass}
-                    placeholder="org/model"
+                    placeholder="org/model or org/model:F16"
                     autoFocus
                   />
                 </label>
                 <label>
-                  <span className="field-label">Filename</span>
-                  <input
-                    value={downloadFilename}
-                    onChange={(event) => setDownloadFilename(event.target.value)}
-                    className={inputClass}
-                    placeholder="model.Q4_K_M.gguf"
-                  />
+                  <span className="field-label">File</span>
+                  {hfFiles.length > 0 ? (
+                    <select
+                      value={downloadFilename}
+                      onChange={(event) => setDownloadFilename(event.target.value)}
+                      className={inputClass}
+                    >
+                      {hfFiles.map((file) => (
+                        <option key={file.name} value={file.name}>
+                          {file.name.split('/').pop()} ({formatBytes(file.sizeBytes)})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={downloadFilename}
+                      onChange={(event) => setDownloadFilename(event.target.value)}
+                      className={inputClass}
+                      placeholder={hfListing ? 'Listing GGUFs…' : 'model.gguf'}
+                      disabled={hfListing}
+                    />
+                  )}
                 </label>
-                <label>
-                  <span className="field-label">HF token</span>
-                  <input
-                    type="password"
-                    value={downloadToken}
-                    onChange={(event) => setDownloadToken(event.target.value)}
-                    className={inputClass}
-                    placeholder="optional — uses node token if empty"
-                    autoComplete="off"
-                  />
-                </label>
+                {hfListError ? <p className="muted">{hfListError}</p> : null}
               </>
             ) : (
               <>

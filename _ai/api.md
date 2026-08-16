@@ -18,11 +18,15 @@ Locked HTTP: `201` create, `204` delete, `400` bad input, `404` missing, `409` c
 | GET/POST | `/clusters/{id}/nodes` | list / register |
 | GET/PUT/DELETE | `/nodes/{id}` | |
 | POST | `/nodes/{id}/test-ssh` | probe; `local: true` when no SSH |
-| GET | `/nodes/{id}/status` | 200 even when ssh/openai down |
-| GET | `/nodes/{id}/engine` | running, pid, lastStart |
+| GET | `/nodes/{id}/status` | cached 30 min; `?refresh=true` live-probes all; `?check=ssh\|engine\|openai` live-probes that part only. 200 even when down |
+| GET | `/nodes/{id}/engine` | running, pid, lastStart from the same cache |
 | POST | `/nodes/{id}/engine/start\|stop\|restart` | |
-| GET | `/nodes/{id}/models` | GGUF files on the node |
-| POST | `/nodes/{id}/models/download` | `huggingface` or `url` |
+| GET | `/nodes/{id}/engine/logs` | last N lines of `~/.platformai/llama-server.log` |
+| GET | `/nodes/{id}/models` | GGUF files on the node; cached 30 min; `?refresh=true` forces a live list |
+| POST | `/nodes/{id}/models/download` | starts a background job, `202` |
+| GET | `/downloads` | list download jobs + live progress |
+| GET | `/downloads/{id}` | one job |
+| POST | `/downloads/{id}/cancel` | kill curl on the node |
 | DELETE | `/nodes/{id}/models` | body `{ filename }` |
 | GET | `/nodes/{id}/models/openai` | proxy `/v1/models` |
 | POST | `/nodes/{id}/chat` | non-stream chat completions |

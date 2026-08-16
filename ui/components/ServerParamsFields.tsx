@@ -33,7 +33,7 @@ const INFO = {
   chatTemplate: 'Override the chat template name or string (--chat-template).',
   metrics: 'Expose Prometheus metrics on the server (--metrics).',
   alias: 'Name the model reports on the OpenAI /v1/models API (-a / --alias).',
-  extraFlags: 'Raw extra CLI flags, appended last. Do not set -m, --model, --host, or --port — those are owned by the form.',
+  extraFlags: 'Raw extra CLI flags, appended last. Do not set -m, --model, --models-dir, --host, or --port — those are owned by the form.',
 };
 
 function errorMessage(err: unknown): string {
@@ -422,7 +422,7 @@ export default function ServerParamsFields({
             onChange={(event) => patch({ extraFlags: event.target.value })}
             rows={3}
             className={inputClass}
-            placeholder="appended last — do not set -m, --model, --host, or --port"
+            placeholder="appended last — do not set -m, --model, --models-dir, --host, or --port"
           />
         </label>
         {extraFlagsError ? <p className="err-banner">{extraFlagsError}</p> : null}

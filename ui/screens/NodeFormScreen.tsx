@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, useMatch, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useMatch, useNavigate } from 'react-router-dom';
 import ErrorBanner from '@components/ErrorBanner';
+import SuccessModal from '@components/SuccessModal';
 import InfoTip from '@components/InfoTip';
 import ServerParamsFields from '@components/ServerParamsFields';
 import SetupInstructions from '@components/SetupInstructions';
@@ -77,6 +78,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 export default function NodeFormScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { refresh } = useClusters();
   const createMatch = useMatch('/clusters/:id/nodes/new');
   const editMatch = useMatch('/nodes/:id/edit');
@@ -89,6 +91,7 @@ export default function NodeFormScreen() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sshResult, setSshResult] = useState<TestSshResult | null>(null);
   const [loadedClusterId, setLoadedClusterId] = useState<string | null>(clusterId ?? null);
@@ -108,6 +111,7 @@ export default function NodeFormScreen() {
   const [listenHost, setListenHost] = useState('0.0.0.0');
   const [listenPort, setListenPort] = useState(8080);
   const [modelDir, setModelDir] = useState('~/models');
+  const [llamaServerPath, setLlamaServerPath] = useState('');
   const [serverParams, setServerParams] = useState<ServerParams>(defaultServerParams);
 
   function applyNode(node: Node) {
@@ -127,6 +131,7 @@ export default function NodeFormScreen() {
     setListenHost(node.listenHost);
     setListenPort(node.listenPort);
     setModelDir(node.modelDir);
+    setLlamaServerPath(node.llamaServerPath || '');
     setServerParams(mergeServerParams(node.serverParams));
   }
 
@@ -153,6 +158,13 @@ export default function NodeFormScreen() {
     };
   }, [nodeId]);
 
+  useEffect(() => {
+    const flash = (location.state as { notice?: string } | null)?.notice;
+    if (!flash) return;
+    setNotice(flash);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.pathname, location.state, navigate]);
+
   function buildPayload(): NodeIn {
     const local = nodeType === 'local';
     return {
@@ -171,6 +183,7 @@ export default function NodeFormScreen() {
       listenHost: listenHost.trim() || '0.0.0.0',
       listenPort,
       modelDir: modelDir.trim() || '~/models',
+      llamaServerPath: llamaServerPath.trim(),
       serverParams,
     };
   }
@@ -202,13 +215,18 @@ export default function NodeFormScreen() {
 
     setSaving(true);
     setError(null);
+    setNotice(null);
     try {
       if (isEdit && nodeId) {
         applyNode(await nodeService.update(nodeId, payload));
+        setNotice(`Node "${payload.name}" saved`);
       } else if (clusterId) {
         const created = await nodeService.create(clusterId, payload);
         void refresh();
-        navigate(`/nodes/${created.id}/edit`, { replace: true });
+        navigate(`/nodes/${created.id}/edit`, {
+          replace: true,
+          state: { notice: `Node "${payload.name}" created` },
+        });
         return;
       } else {
         setError('Missing cluster id');
@@ -250,6 +268,7 @@ export default function NodeFormScreen() {
       </div>
 
       {error ? <ErrorBanner message={error} /> : previewError ? <ErrorBanner message={previewError} /> : null}
+      {notice ? <SuccessModal message={notice} onClose={() => setNotice(null)} /> : null}
 
       {loading ? <p className="muted">Loading…</p> : null}
 
@@ -433,6 +452,19 @@ export default function NodeFormScreen() {
             <div className="sm:col-span-2">
               <Field label="Model dir" info="Directory on the node where GGUF files are stored. ~/models is expanded on the machine.">
                 <input value={modelDir} onChange={(event) => setModelDir(event.target.value)} className={inputClass} />
+              </Field>
+            </div>
+            <div className="sm:col-span-2">
+              <Field
+                label="llama-server path"
+                info="Full path to llama-server on the node. Leave empty to auto-detect (PATH, Homebrew, /opt/homebrew/bin, /usr/local/bin)."
+              >
+                <input
+                  value={llamaServerPath}
+                  onChange={(event) => setLlamaServerPath(event.target.value)}
+                  className={inputClass}
+                  placeholder="/opt/homebrew/bin/llama-server"
+                />
               </Field>
             </div>
           </div>

@@ -96,9 +96,13 @@ export interface Node {
   listenHost: string;
   listenPort: number;
   modelDir: string;
+  llamaServerPath: string;
+  selectedModel?: string;
   serverParams: ServerParams;
   lastStart: LastStart | null;
   lastOpenAICheck: LastOpenAICheck | null;
+  statusCache: StatusCache | null;
+  modelsCache: ModelsCache | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -108,6 +112,23 @@ export interface LastOpenAICheck {
   checkedAt: string;
   models: string[];
   detail?: string | null;
+}
+
+export interface ModelsCache {
+  items: RemoteModel[];
+  checkedAt: string;
+  fresh: boolean;
+}
+
+export interface StatusCache {
+  ssh: 'up' | 'down';
+  openai: 'up' | 'down';
+  running: boolean;
+  pid: string | null;
+  models: string[];
+  detail?: string | null;
+  checkedAt: string;
+  fresh: boolean;
 }
 
 export interface NodeIn {
@@ -126,6 +147,8 @@ export interface NodeIn {
   listenHost?: string;
   listenPort?: number;
   modelDir?: string;
+  llamaServerPath?: string;
+  selectedModel?: string;
   serverParams?: ServerParams;
 }
 
@@ -145,8 +168,12 @@ export interface NodeUpdate {
   listenHost?: string;
   listenPort?: number;
   modelDir?: string;
+  llamaServerPath?: string;
+  selectedModel?: string;
   serverParams?: ServerParams;
 }
+
+export type StatusCheck = 'ssh' | 'engine' | 'openai';
 
 export interface NodeStatus {
   ssh: 'up' | 'down';
@@ -154,6 +181,9 @@ export interface NodeStatus {
   models: string[];
   detail: string | null;
   checkedAt?: string | null;
+  cached?: boolean;
+  running?: boolean;
+  pid?: string | null;
 }
 
 export interface EngineStatus {
@@ -161,6 +191,12 @@ export interface EngineStatus {
   pid: string | null;
   lastStart: LastStart | null;
   llamaServer?: string | null;
+}
+
+export interface EngineLogs {
+  text: string;
+  missing: boolean;
+  lines: number;
 }
 
 export interface RemoteModel {
@@ -180,6 +216,9 @@ export interface ChatIn {
   temperature?: number;
   topP?: number;
   topK?: number;
+  minP?: number;
+  presencePenalty?: number;
+  repetitionPenalty?: number;
   maxTokens?: number;
 }
 
@@ -203,6 +242,38 @@ export interface DownloadModelIn {
 export interface DownloadModelResult {
   name: string;
   url: string;
+}
+
+export type DownloadStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+
+export interface DownloadJob {
+  id: string;
+  nodeId: string;
+  clusterId: string;
+  nodeName: string;
+  source: string;
+  repo: string;
+  filename: string;
+  url: string;
+  status: DownloadStatus;
+  bytes: number;
+  totalBytes: number;
+  detail: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string;
+}
+
+export interface HfRepoFile {
+  name: string;
+  sizeBytes: number;
+}
+
+export interface HfRepoFiles {
+  repo: string;
+  revision: string;
+  quant?: string;
+  files: HfRepoFile[];
 }
 
 export interface PreviewIn {
