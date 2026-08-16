@@ -39,6 +39,8 @@ Written by `scripts/update-brain.sh` on 2026-08-16. Do not edit.
 - `api/routes/engines.py`
 - `api/routes/nodes.py`
 - `api/services/__init__.py`
+- `api/services/download_watcher.py`
+- `api/services/downloads.py`
 - `api/services/engine.py`
 - `api/services/openai_proxy.py`
 - `api/services/ssh.py`

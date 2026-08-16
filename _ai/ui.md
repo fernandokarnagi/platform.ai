@@ -21,7 +21,7 @@ Tokens and shared classes live in `ui/index.css`.
 
 Pages use `width: 100%` and `max-width: 2000px`.
 | `/nodes/:id/edit` | Edit node |
-| `/downloads` | Background model download progress |
+| `/downloads` | Background model download progress from Mongo (watcher updates running jobs) |
 
 No login screen.
 

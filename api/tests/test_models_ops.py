@@ -139,6 +139,13 @@ async def test_download_url_and_hf(app, monkeypatch):
         assert ok.status_code == 202
         assert ok.json()["status"] == "running"
         assert ok.json()["filename"] == "a.gguf"
+        from api.database import get_database
+        from api.services.downloads import sync_job
+        from bson import ObjectId
+
+        db = get_database()
+        ok_doc = await db.downloads.find_one({"_id": ObjectId(ok.json()["id"])})
+        await sync_job(db, ok_doc)
         polled = await client.get(f"/downloads/{ok.json()['id']}")
         assert polled.status_code == 200
         assert polled.json()["status"] == "done"
@@ -147,6 +154,8 @@ async def test_download_url_and_hf(app, monkeypatch):
             json={"source": "huggingface", "repo": "org/model", "filename": "missing.gguf"},
         )
         assert fail.status_code == 202
+        fail_doc = await db.downloads.find_one({"_id": ObjectId(fail.json()["id"])})
+        await sync_job(db, fail_doc)
         failed = await client.get(f"/downloads/{fail.json()['id']}")
         assert failed.json()["status"] == "failed"
         assert "Authorization: Bearer hf_node" in seen.get("start", "")
@@ -215,6 +224,45 @@ async def test_download_cancel(app, monkeypatch):
         cancelled = await client.post(f"/downloads/{started.json()['id']}/cancel")
         assert cancelled.status_code == 200
         assert cancelled.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_list_downloads_reads_db_only(app, monkeypatch):
+    async def boom(*args, **kwargs):
+        raise AssertionError("GET /downloads must not SSH")
+
+    monkeypatch.setattr(ssh_mod, "run_command", boom)
+    from api.database import get_database
+    from bson import ObjectId
+    from datetime import datetime
+
+    db = get_database()
+    now = datetime.utcnow()
+    await db.downloads.insert_one(
+        {
+            "nodeId": ObjectId(),
+            "clusterId": ObjectId(),
+            "nodeName": "this-mac",
+            "source": "url",
+            "repo": "",
+            "filename": "a.gguf",
+            "url": "https://example.com/a.gguf",
+            "modelDir": "/tmp",
+            "status": "running",
+            "bytes": 100,
+            "totalBytes": 400,
+            "detail": "",
+            "createdAt": now,
+            "updatedAt": now,
+            "finishedAt": None,
+        }
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        listed = await client.get("/downloads")
+        assert listed.status_code == 200
+        assert listed.json()[0]["status"] == "running"
+        assert listed.json()[0]["bytes"] == 100
+        assert listed.json()[0]["filename"] == "a.gguf"
 
 
 @pytest.mark.asyncio

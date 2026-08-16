@@ -24,8 +24,8 @@ Locked HTTP: `201` create, `204` delete, `400` bad input, `404` missing, `409` c
 | GET | `/nodes/{id}/engine/logs` | last N lines of `~/.platformai/llama-server.log` |
 | GET | `/nodes/{id}/models` | GGUF files on the node; cached 30 min; `?refresh=true` forces a live list |
 | POST | `/nodes/{id}/models/download` | starts a background job, `202` |
-| GET | `/downloads` | list download jobs + live progress |
-| GET | `/downloads/{id}` | one job |
+| GET | `/downloads` | list jobs from Mongo only. A watcher updates running jobs every 3s |
+| GET | `/downloads/{id}` | one job from Mongo |
 | POST | `/downloads/{id}/cancel` | kill curl on the node |
 | DELETE | `/nodes/{id}/models` | body `{ filename }` |
 | GET | `/nodes/{id}/models/openai` | proxy `/v1/models` |
