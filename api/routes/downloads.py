@@ -50,3 +50,62 @@ async def cancel_download(job_id: str):
     )
     updated = await db.downloads.find_one({"_id": doc["_id"]})
     return download_helper(updated)
+
+
+@router.post("/downloads/{job_id}/retry")
+async def retry_download(job_id: str):
+    db = get_database()
+    doc = await db.downloads.find_one({"_id": parse_object_id(job_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    if doc.get("status") not in ("failed", "cancelled"):
+        raise HTTPException(status_code=409, detail="Download cannot be retried")
+    node = await db.nodes.find_one({"_id": doc["nodeId"]}) if doc.get("nodeId") else None
+    now = datetime.utcnow()
+    if not node:
+        await db.downloads.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"status": "failed", "detail": "Node is gone", "updatedAt": now, "finishedAt": now}},
+        )
+        raise HTTPException(status_code=502, detail="Node is gone")
+    token = (node.get("hfToken") or "") if doc.get("source") == "huggingface" else ""
+    await db.downloads.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {"status": "queued", "detail": "", "bytes": 0, "updatedAt": now, "finishedAt": None}},
+    )
+    try:
+        started = await ssh_mod.run_command(
+            node,
+            LlamaCppEngine.start_download_command(
+                doc["modelDir"], doc["filename"], doc["url"], str(doc["_id"]), token
+            ),
+        )
+    except ssh_mod.SshError as exc:
+        await db.downloads.update_one(
+            {"_id": doc["_id"]},
+            {
+                "$set": {
+                    "status": "failed",
+                    "detail": str(exc),
+                    "updatedAt": datetime.utcnow(),
+                    "finishedAt": datetime.utcnow(),
+                }
+            },
+        )
+        raise HTTPException(status_code=502, detail=f"Download failed: {exc}") from exc
+    pid = (started.stdout or "").strip().splitlines()
+    pid = pid[-1] if pid else ""
+    if started.exit_status != 0 or not pid:
+        err = (started.stderr or started.stdout or "failed to start download").strip()
+        await db.downloads.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"status": "failed", "detail": err, "updatedAt": datetime.utcnow(), "finishedAt": datetime.utcnow()}},
+        )
+        raise HTTPException(status_code=502, detail=f"Download failed: {err}")
+    await db.downloads.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {"status": "running", "detail": "", "updatedAt": datetime.utcnow(), "finishedAt": None}},
+    )
+    await db.nodes.update_one({"_id": node["_id"]}, {"$unset": {"modelsCache": ""}})
+    updated = await db.downloads.find_one({"_id": doc["_id"]})
+    return download_helper(updated)

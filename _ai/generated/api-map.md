@@ -1,12 +1,12 @@
 ---
 title: Generated API map
 tags: [generated, api]
-updated: 2026-08-16
+updated: 2026-08-17
 ---
 
 # Generated API map
 
-Written by `scripts/update-brain.sh` on 2026-08-16. Do not edit.
+Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 
 | Method | Path | File |
 |---|---|---|
@@ -20,6 +20,7 @@ Written by `scripts/update-brain.sh` on 2026-08-16. Do not edit.
 | GET | `/downloads` | `downloads.py` |
 | GET | `/downloads/{job_id}` | `downloads.py` |
 | POST | `/downloads/{job_id}/cancel` | `downloads.py` |
+| POST | `/downloads/{job_id}/retry` | `downloads.py` |
 | POST | `/engines/llama.cpp/preview` | `engines.py` |
 | GET | `/health` | `main.py` |
 | DELETE | `/nodes/{node_id}` | `nodes.py` |

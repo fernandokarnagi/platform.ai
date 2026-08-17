@@ -29,8 +29,9 @@ const INFO = {
   cpuMoe: 'Keep all Mixture-of-Experts weights on CPU (--cpu-moe). Frees GPU memory on large MoE models.',
   nCpuMoe: 'Keep MoE weights of the first N layers on CPU (--n-cpu-moe).',
   loadMode: 'How the GGUF is mapped into memory (--load-mode): auto, mmap, mlock, dio, or none.',
-  jinja: 'Enable Jinja chat templates (--jinja). Needed for many tool-calling models.',
-  chatTemplate: 'Override the chat template name or string (--chat-template).',
+  jinja: 'Enable Jinja chat templates (--jinja). Needed for many tool-calling models. Turn this on to paste a custom template.',
+  chatTemplate: 'Built-in template name such as chatml or llama3 (--chat-template).',
+  jinjaTemplate: 'Jinja chat template used on llama-server start (--chat-template). Leave empty to use the template stored in the model. --jinja is passed before this flag so custom templates are accepted.',
   metrics: 'Expose Prometheus metrics on the server (--metrics).',
   alias: 'Name the model reports on the OpenAI /v1/models API (-a / --alias).',
   extraFlags: 'Raw extra CLI flags, appended last. Do not set -m, --model, --models-dir, --host, or --port — those are owned by the form.',
@@ -379,14 +380,29 @@ export default function ServerParamsFields({
                 <InfoTip text={INFO.jinja} />
               </span>
             </label>
-            <Field label="Chat template" info={INFO.chatTemplate}>
-              <input
-                value={params.chatTemplate ?? ''}
-                onChange={(event) => patch({ chatTemplate: event.target.value || null })}
-                className={inputClass}
-                placeholder="omit"
-              />
-            </Field>
+            {params.jinja ? (
+              <div className="sm:col-span-2">
+                <Field label="Jinja template" info={INFO.jinjaTemplate}>
+                  <textarea
+                    value={params.chatTemplate ?? ''}
+                    onChange={(event) => patch({ chatTemplate: event.target.value || null })}
+                    rows={12}
+                    spellCheck={false}
+                    className={`${inputClass} field-mono`}
+                    placeholder="Paste the Jinja chat template. Leave empty to use the model's built-in template."
+                  />
+                </Field>
+              </div>
+            ) : (
+              <Field label="Chat template" info={INFO.chatTemplate}>
+                <input
+                  value={params.chatTemplate ?? ''}
+                  onChange={(event) => patch({ chatTemplate: event.target.value || null })}
+                  className={inputClass}
+                  placeholder="omit — chatml, llama3, …"
+                />
+              </Field>
+            )}
             <label className="flex items-end gap-2">
               <input
                 type="checkbox"

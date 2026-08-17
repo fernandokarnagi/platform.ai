@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import EngineParamsModal from '@components/EngineParamsModal';
 import ErrorBanner from '@components/ErrorBanner';
 import SuccessModal from '@components/SuccessModal';
 import ModelRadios from '@components/ModelRadios';
@@ -81,6 +82,7 @@ export default function ClusterDetailScreen() {
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [saving, setSaving] = useState(false);
+  const [paramsNode, setParamsNode] = useState<Node | null>(null);
 
   const applyCachedProbes = useCallback((nodeList: Node[]) => {
     const next: Record<string, NodeProbe> = {};
@@ -320,13 +322,25 @@ export default function ClusterDetailScreen() {
                         {probe ? <StatusIcon kind={probe.status.ssh === 'up' ? 'up' : 'down'} /> : <span className="muted">…</span>}
                       </td>
                       <td>
-                        {probe?.engine ? (
-                          <StatusIcon kind={probe.engine.running ? 'running' : 'stopped'} />
-                        ) : probe ? (
-                          <span className="muted">—</span>
-                        ) : (
-                          <span className="muted">…</span>
-                        )}
+                        <span className="flex flex-wrap items-center gap-2">
+                          {probe?.engine ? (
+                            <StatusIcon kind={probe.engine.running ? 'running' : 'stopped'} />
+                          ) : probe ? (
+                            <span className="muted">—</span>
+                          ) : (
+                            <span className="muted">…</span>
+                          )}
+                          <button
+                            type="button"
+                            className="toggle stat-check-btn"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setParamsNode(node);
+                            }}
+                          >
+                            Params
+                          </button>
+                        </span>
                       </td>
                       <td>
                         {probe ? (
@@ -385,6 +399,8 @@ export default function ClusterDetailScreen() {
           </form>
         </Modal>
       ) : null}
+
+      {paramsNode ? <EngineParamsModal node={paramsNode} onClose={() => setParamsNode(null)} /> : null}
     </div>
   );
 }

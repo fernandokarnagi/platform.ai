@@ -27,6 +27,7 @@ Locked HTTP: `201` create, `204` delete, `400` bad input, `404` missing, `409` c
 | GET | `/downloads` | list jobs from Mongo only. A watcher updates running jobs every 3s |
 | GET | `/downloads/{id}` | one job from Mongo |
 | POST | `/downloads/{id}/cancel` | kill curl on the node |
+| POST | `/downloads/{id}/retry` | restart a failed or cancelled job on the same node |
 | DELETE | `/nodes/{id}/models` | body `{ filename }` |
 | GET | `/nodes/{id}/models/openai` | proxy `/v1/models` |
 | POST | `/nodes/{id}/chat` | non-stream chat completions |

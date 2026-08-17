@@ -65,7 +65,6 @@ class LlamaCppEngine:
             ("tensorSplit", "--tensor-split"),
             ("device", "--device"),
             ("loadMode", "--load-mode"),
-            ("chatTemplate", "--chat-template"),
         ]
         for key, flag in optional_str:
             value = params.get(key)
@@ -74,8 +73,12 @@ class LlamaCppEngine:
 
         if params.get("cpuMoe"):
             argv.append("--cpu-moe")
+        # --jinja must precede --chat-template or llama-server rejects custom templates.
         if params.get("jinja"):
             argv.append("--jinja")
+        chat_template = params.get("chatTemplate")
+        if chat_template:
+            argv.extend(["--chat-template", _flag_value(chat_template)])
         if params.get("metrics"):
             argv.append("--metrics")
         if params.get("alias"):
@@ -100,7 +103,10 @@ class LlamaCppEngine:
     def preview_command(node: dict) -> str:
         model_dir = node.get("modelDir") or "~/models"
         argv = LlamaCppEngine.build_argv(node, model_dir)
-        return "llama-server " + " ".join(argv)
+        return "llama-server " + " ".join(
+            shlex.quote(part) if any(ch.isspace() or ch in "'\"\\" for ch in part) else part
+            for part in argv
+        )
 
     @staticmethod
     @staticmethod
@@ -268,6 +274,8 @@ class LlamaCppEngine:
         )
         return (
             f"mkdir -p {shlex.quote(model_dir)} {shlex.quote(job_dir)}; "
+            f"rm -f {shlex.quote(job_dir + '/exit')} {shlex.quote(job_dir + '/pid')} "
+            f"{shlex.quote(job_dir + '/curl.log')} {shlex.quote(part)}; "
             f"nohup /bin/bash -lc {shlex.quote(inner)} "
             f"> {shlex.quote(job_dir)}/curl.log 2>&1 & "
             f"echo $! | tee {shlex.quote(job_dir)}/pid"

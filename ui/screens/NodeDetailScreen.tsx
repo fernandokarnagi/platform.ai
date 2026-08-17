@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import EngineParamsModal from '@components/EngineParamsModal';
 import ErrorBanner from '@components/ErrorBanner';
 import ModelRadios from '@components/ModelRadios';
 import StatusIcon from '@components/StatusIcon';
@@ -137,6 +138,7 @@ export default function NodeDetailScreen() {
     'start' | 'stop' | 'restart' | 'download' | 'delete' | 'delete-node' | 'chat' | null
   >(null);
   const [checking, setChecking] = useState<StatusCheck | null>(null);
+  const [paramsOpen, setParamsOpen] = useState(false);
 
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [downloadSource, setDownloadSource] = useState<'huggingface' | 'url'>('huggingface');
@@ -885,14 +887,24 @@ export default function NodeDetailScreen() {
                       {engine ? <StatusIcon kind={engine.running ? 'running' : 'stopped'} /> : <span className="muted">—</span>}
                       <span className="muted">pid {engine?.pid ?? '—'}</span>
                     </span>
-                    <button
-                      type="button"
-                      className="toggle stat-check-btn"
-                      disabled={checking !== null || busy !== null}
-                      onClick={() => void handleCheck('engine')}
-                    >
-                      {checking === 'engine' ? 'Checking…' : 'Check'}
-                    </button>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className="toggle stat-check-btn"
+                        disabled={!node}
+                        onClick={() => setParamsOpen(true)}
+                      >
+                        Params
+                      </button>
+                      <button
+                        type="button"
+                        className="toggle stat-check-btn"
+                        disabled={checking !== null || busy !== null}
+                        onClick={() => void handleCheck('engine')}
+                      >
+                        {checking === 'engine' ? 'Checking…' : 'Check'}
+                      </button>
+                    </span>
                   </dd>
                 </div>
                 <div>
@@ -1066,6 +1078,8 @@ export default function NodeDetailScreen() {
           </form>
         </Modal>
       ) : null}
+
+      {paramsOpen && node ? <EngineParamsModal node={node} onClose={() => setParamsOpen(false)} /> : null}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 ---
 title: Platform.AI — Index
 tags: [moc, platform-ai]
-updated: 2026-08-16
+updated: 2026-08-17
 ---
 
 # Platform.AI

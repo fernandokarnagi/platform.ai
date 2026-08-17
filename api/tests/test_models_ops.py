@@ -227,6 +227,89 @@ async def test_download_cancel(app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_download_retry_failed(app, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ssh_mod, "run_command", _download_fake_run(seen))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed(client)
+        started = await client.post(
+            f"/nodes/{node['id']}/models/download",
+            json={"source": "url", "url": "https://example.com/c.gguf", "filename": "c.gguf"},
+        )
+        assert started.status_code == 202
+        from api.database import get_database
+        from bson import ObjectId
+        from datetime import datetime
+
+        db = get_database()
+        await db.downloads.update_one(
+            {"_id": ObjectId(started.json()["id"])},
+            {"$set": {"status": "failed", "detail": "curl: (23) Failure writing output to destination", "finishedAt": datetime.utcnow()}},
+        )
+        retried = await client.post(f"/downloads/{started.json()['id']}/retry")
+        assert retried.status_code == 200
+        assert retried.json()["status"] == "running"
+        assert retried.json()["detail"] == ""
+        assert retried.json()["finishedAt"] == ""
+        assert "nohup" in seen.get("start", "")
+        assert "rm -f" in seen.get("start", "")
+        running = await client.post(f"/downloads/{started.json()['id']}/retry")
+        assert running.status_code == 409
+        assert running.json()["detail"] == "Download cannot be retried"
+
+
+@pytest.mark.asyncio
+async def test_download_retry_cancelled(app, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ssh_mod, "run_command", _download_fake_run(seen))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed(client)
+        from api.database import get_database
+        from bson import ObjectId
+        from datetime import datetime
+
+        now = datetime.utcnow()
+        db = get_database()
+        inserted = await db.downloads.insert_one(
+            {
+                "nodeId": ObjectId(node["id"]),
+                "clusterId": ObjectId(node["clusterId"]),
+                "nodeName": node["name"],
+                "source": "huggingface",
+                "repo": "org/model",
+                "filename": "a.gguf",
+                "url": "https://huggingface.co/org/model/resolve/main/a.gguf",
+                "modelDir": "/tmp/models",
+                "status": "cancelled",
+                "bytes": 0,
+                "totalBytes": 100,
+                "detail": "Cancelled",
+                "createdAt": now,
+                "updatedAt": now,
+                "finishedAt": now,
+            }
+        )
+        retried = await client.post(f"/downloads/{inserted.inserted_id}/retry")
+        assert retried.status_code == 200
+        assert retried.json()["status"] == "running"
+        assert "Authorization: Bearer hf_node" in seen.get("start", "")
+
+
+@pytest.mark.asyncio
+async def test_download_retry_missing(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        missing = await client.post("/downloads/64b64b64b64b64b64b64b64b/retry")
+        assert missing.status_code == 404
+
+
+def test_start_download_command_clears_stale_job_files():
+    cmd = LlamaCppEngine.start_download_command("/tmp/models", "a.gguf", "https://example.com/a.gguf", "job1")
+    assert "rm -f" in cmd
+    assert "/tmp/models/a.gguf.part" in cmd
+    assert "~/.platformai/downloads/job1/exit" in cmd
+
+
+@pytest.mark.asyncio
 async def test_list_downloads_reads_db_only(app, monkeypatch):
     async def boom(*args, **kwargs):
         raise AssertionError("GET /downloads must not SSH")

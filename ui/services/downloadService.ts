@@ -44,4 +44,8 @@ export const downloadService = {
   cancel(id: string): Promise<DownloadJob> {
     return api<DownloadJob>(`/downloads/${id}/cancel`, { method: 'POST' });
   },
+
+  retry(id: string): Promise<DownloadJob> {
+    return api<DownloadJob>(`/downloads/${id}/retry`, { method: 'POST' });
+  },
 };

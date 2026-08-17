@@ -236,6 +236,35 @@ a { color: inherit; text-decoration: none; }
   background: rgba(110, 118, 129, 0.18);
   color: var(--muted);
 }
+.params-list {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+  max-height: min(70vh, 520px);
+  overflow: auto;
+}
+.params-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 42%) 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.params-row dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.params-row dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.params-row dd.params-pre {
+  white-space: pre-wrap;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-height: 220px;
+  overflow: auto;
+}
 
 .badge {
   font-size: 11px;
@@ -342,6 +371,12 @@ a { color: inherit; text-decoration: none; }
 .field-input:focus { outline: none; border-color: var(--accent); }
 .field-input:read-only { color: var(--muted); background: var(--panel-2); }
 .field-input::placeholder { color: #6e7681; }
+textarea.field-input { resize: vertical; }
+textarea.field-input.field-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-height: 12rem;
+  white-space: pre;
+}
 
 .modal-backdrop {
   position: fixed;

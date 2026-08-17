@@ -1,12 +1,12 @@
 ---
 title: Generated file map
 tags: [generated]
-updated: 2026-08-16
+updated: 2026-08-17
 ---
 
 # Generated file map
 
-Written by `scripts/update-brain.sh` on 2026-08-16. Do not edit.
+Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 
 - `AGENTS.md`
 - `CLAUDE.md`
@@ -63,6 +63,7 @@ Written by `scripts/update-brain.sh` on 2026-08-16. Do not edit.
 - `scripts/update-brain.sh`
 - `start.sh`
 - `stop.sh`
+- `ui/components/EngineParamsModal.tsx`
 - `ui/components/ErrorBanner.tsx`
 - `ui/components/InfoTip.tsx`
 - `ui/components/ModelRadios.tsx`

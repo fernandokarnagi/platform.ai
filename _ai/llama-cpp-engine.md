@@ -1,7 +1,7 @@
 ---
 title: llama.cpp engine
 tags: [llama-cpp, engine]
-updated: 2026-08-16
+updated: 2026-08-17
 ---
 
 # llama.cpp engine
@@ -19,6 +19,8 @@ If `llamaServerPath` is set on the node, Start uses that file (`-x`). Otherwise 
 Always emitted: `--ctx-size` (even 0), `--n-gpu-layers`, `--flash-attn`, `--parallel`, `--kv-offload` / `--no-kv-offload`, `--fit`.
 
 Always emitted: `--models-dir` (the node model dir), `--host`, `--port`. No `-m` / `$MODEL`. llama-server router mode loads GGUFs from that directory.
+
+`--jinja` is emitted before `--chat-template`. Custom Jinja content is rejected unless `--jinja` comes first. Empty `chatTemplate` uses the model's stored template.
 
 Owned by the form — extraFlags may **not** contain `-m`, `--model`, `--models-dir`, `--host`, `--port` (400).
 

@@ -1,7 +1,7 @@
 ---
 title: UI
 tags: [ui]
-updated: 2026-08-16
+updated: 2026-08-17
 ---
 
 # UI
@@ -21,13 +21,13 @@ Tokens and shared classes live in `ui/index.css`.
 
 Pages use `width: 100%` and `max-width: 2000px`.
 | `/nodes/:id/edit` | Edit node |
-| `/downloads` | Background model download progress from Mongo (watcher updates running jobs) |
+| `/downloads` | Background model download progress from Mongo (watcher updates running jobs). Failed and cancelled rows have Retry. |
 
 No login screen.
 
 Command preview has **Copy**. Each form parameter has an **i** button that opens the purpose on click.
 
-Node table: Access, Engine, OpenAI (healthy/down + last check time), Model. OpenAI and the old Status column are the same check.
+Node table: Access, Engine, OpenAI (healthy/down + last check time), Model. OpenAI and the old Status column are the same check. **Params** next to Engine (cluster table or node Status) opens a popup of llama-server parameter names and values.
 
 Cluster list **Nodes** is live `running / stopped`, not a bare count. Timestamps are SGT (`Asia/Singapore`), format `DD-MMM-YYYY HH:mm`. Naive API ISO strings are UTC.
 
@@ -36,6 +36,8 @@ Edit and delete live on the detail page only. Cluster list and the node table ha
 ## Node form
 
 Sections: Identity, SSH (or local note), OpenAI, Server (listen + model dir + optional llama-server path), Load, Advanced, Extra flags, Command preview, Setup (after save).
+
+Advanced **Jinja** reveals a textarea for the chat template used on start (`--jinja` then `--chat-template`). Leave it empty to keep the model's built-in template. With Jinja off, Chat template is a single-line built-in name (`chatml`, `llama3`, …).
 
 See [[local-vs-ssh]] for the localhost path.
 

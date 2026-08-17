@@ -30,6 +30,7 @@ export default function DownloadsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -65,6 +66,18 @@ export default function DownloadsScreen() {
       setError(errorMessage(err));
     } finally {
       setCancelling(null);
+    }
+  }
+
+  async function handleRetry(job: DownloadJob) {
+    setRetrying(job.id);
+    try {
+      await downloadService.retry(job.id);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setRetrying(null);
     }
   }
 
@@ -156,6 +169,16 @@ export default function DownloadsScreen() {
                         onClick={() => void handleCancel(job)}
                       >
                         {cancelling === job.id ? 'Cancelling…' : 'Cancel'}
+                      </button>
+                    ) : null}
+                    {job.status === 'failed' || job.status === 'cancelled' ? (
+                      <button
+                        type="button"
+                        className="toggle"
+                        disabled={retrying === job.id}
+                        onClick={() => void handleRetry(job)}
+                      >
+                        {retrying === job.id ? 'Retrying…' : 'Retry'}
                       </button>
                     ) : null}
                   </td>

@@ -43,6 +43,36 @@ def test_optional_and_boolean_flags():
     assert "-a" in argv and argv[argv.index("-a") + 1] == "phi"
 
 
+def test_jinja_precedes_chat_template_content():
+    template = "{% for message in messages %}{{ message.content }}{% endfor %}"
+    argv = LlamaCppEngine.build_argv(
+        _node(serverParams={"jinja": True, "chatTemplate": template}),
+        "/m",
+    )
+    assert "--jinja" in argv
+    assert argv.index("--jinja") < argv.index("--chat-template")
+    assert argv[argv.index("--chat-template") + 1] == template
+
+
+def test_chat_template_without_jinja_still_emits():
+    argv = LlamaCppEngine.build_argv(
+        _node(serverParams={"chatTemplate": "chatml"}),
+        "/m",
+    )
+    assert "--jinja" not in argv
+    assert argv[argv.index("--chat-template") + 1] == "chatml"
+
+
+def test_preview_quotes_multiline_chat_template():
+    template = "{% if true %}\nhello\n{% endif %}"
+    command = LlamaCppEngine.preview_command(
+        _node(serverParams={"jinja": True, "chatTemplate": template}),
+    )
+    assert "--jinja" in command
+    assert "--chat-template" in command
+    assert "hello" in command
+
+
 def test_extra_flags_appended_last():
     argv = LlamaCppEngine.build_argv(
         _node(serverParams={"extraFlags": "--verbose --offline"}),

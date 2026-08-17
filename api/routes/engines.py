@@ -15,8 +15,9 @@ async def preview_llama_cpp(payload: PreviewIn):
     }
     try:
         argv = LlamaCppEngine.build_argv(node, payload.modelDir)
+        command = LlamaCppEngine.preview_command(node)
     except ForbiddenExtraFlagsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"argv": argv, "command": "llama-server " + " ".join(argv)}
+    return {"argv": argv, "command": command}
