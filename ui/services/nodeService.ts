@@ -116,10 +116,10 @@ export const nodeService = {
     return api<EngineStatus>(`/nodes/${id}/engine${refresh ? '?refresh=true' : ''}`);
   },
 
-  start(id: string): Promise<EngineStatus> {
+  start(id: string, modelFilename?: string): Promise<EngineStatus> {
     return api<EngineStatus>(`/nodes/${id}/engine/start`, {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify(modelFilename ? { modelFilename } : {}),
     });
   },
 
@@ -168,8 +168,8 @@ export const nodeService = {
     });
   },
 
-  previewCommand(payload: PreviewIn): Promise<PreviewOut> {
-    return api<PreviewOut>('/engines/llama.cpp/preview', {
+  previewCommand(payload: PreviewIn, engine: string = 'llama.cpp'): Promise<PreviewOut> {
+    return api<PreviewOut>(`/engines/${engine}/preview`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });

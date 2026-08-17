@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from api.engines.llama_cpp import LlamaCppEngine
+from api.engines import get_engine
 from api.logger import get_logger
 from api.services import ssh as ssh_mod
 
@@ -21,9 +21,10 @@ async def sync_job(db, doc: dict) -> dict:
         doc.update({"status": "failed", "detail": "Node is gone", "updatedAt": now, "finishedAt": now})
         return doc
     try:
+        engine = get_engine(node.get("engine") or doc.get("engine"))
         result = await ssh_mod.run_command(
             node,
-            LlamaCppEngine.download_progress_command(doc["modelDir"], doc["filename"], str(doc["_id"])),
+            engine.download_progress_command(doc["modelDir"], doc["filename"], str(doc["_id"])),
         )
     except ssh_mod.SshError as exc:
         await db.downloads.update_one(

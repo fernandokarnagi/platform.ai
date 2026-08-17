@@ -5,7 +5,10 @@ import SuccessModal from '@components/SuccessModal';
 import InfoTip from '@components/InfoTip';
 import ServerParamsFields from '@components/ServerParamsFields';
 import SetupInstructions from '@components/SetupInstructions';
+import VllmParamsFields from '@components/VllmParamsFields';
 import { useClusters } from '@contexts/ClusterContext';
+import { engineBinaryName, engineLabel, isVllm } from '@/lib/engine';
+import { clusterService } from '@services/clusterService';
 import { nodeService } from '@services/nodeService';
 import type { Node, NodeIn, NodeType, ServerParams, SshAuthType, TestSshResult } from '@/types';
 
@@ -43,6 +46,18 @@ function defaultServerParams(): ServerParams {
     metrics: null,
     alias: null,
     extraFlags: '',
+    tensorParallelSize: 1,
+    gpuMemoryUtilization: 0.9,
+    maxModelLen: null,
+    dtype: null,
+    quantization: null,
+    maxNumSeqs: null,
+    swapSpace: null,
+    kvCacheDtype: null,
+    servedModelName: null,
+    trustRemoteCode: null,
+    enforceEager: null,
+    enablePrefixCaching: null,
   };
 }
 
@@ -79,7 +94,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 export default function NodeFormScreen() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { refresh } = useClusters();
+  const { clusters, refresh } = useClusters();
   const createMatch = useMatch('/clusters/:id/nodes/new');
   const editMatch = useMatch('/nodes/:id/edit');
   const clusterId = createMatch?.params.id;
@@ -112,7 +127,16 @@ export default function NodeFormScreen() {
   const [listenPort, setListenPort] = useState(8080);
   const [modelDir, setModelDir] = useState('~/models');
   const [llamaServerPath, setLlamaServerPath] = useState('');
+  const [vllmImage, setVllmImage] = useState(
+    'rocm/vllm:rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0',
+  );
+  const [selectedModel, setSelectedModel] = useState('');
+  const [nodeEngine, setNodeEngine] = useState('');
   const [serverParams, setServerParams] = useState<ServerParams>(defaultServerParams);
+
+  const cluster = clusters.find((item) => item.id === (clusterId || loadedClusterId));
+  const engine = cluster?.engine || nodeEngine || 'llama.cpp';
+  const vllm = isVllm(engine);
 
   function applyNode(node: Node) {
     setLoadedClusterId(node.clusterId);
@@ -132,6 +156,11 @@ export default function NodeFormScreen() {
     setListenPort(node.listenPort);
     setModelDir(node.modelDir);
     setLlamaServerPath(node.llamaServerPath || '');
+    setVllmImage(
+      node.vllmImage || 'rocm/vllm:rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0',
+    );
+    setSelectedModel(node.selectedModel || '');
+    setNodeEngine(node.engine || '');
     setServerParams(mergeServerParams(node.serverParams));
   }
 
@@ -159,6 +188,39 @@ export default function NodeFormScreen() {
   }, [nodeId]);
 
   useEffect(() => {
+    if (isEdit || !clusterId) return;
+    let cancelled = false;
+    void clusterService
+      .get(clusterId)
+      .then((clusterDoc) => {
+        if (cancelled) return;
+        setLoadedClusterId(clusterDoc.id);
+        setNodeEngine(clusterDoc.engine || '');
+        setError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setNodeEngine('');
+        setError(
+          errorMessage(err) === 'Not found'
+            ? 'This cluster is gone. Go back to Clusters and open the vLLM cluster again.'
+            : errorMessage(err),
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clusterId, isEdit]);
+
+  useEffect(() => {
+    if (isEdit || !vllm) return;
+    setListenPort((current) => (current === 8080 ? 8000 : current));
+    setOpenaiBaseUrl((current) =>
+      current.includes('127.0.0.1:8080') ? current.replace('127.0.0.1:8080', '127.0.0.1:8000') : current,
+    );
+  }, [isEdit, vllm]);
+
+  useEffect(() => {
     const flash = (location.state as { notice?: string } | null)?.notice;
     if (!flash) return;
     setNotice(flash);
@@ -184,6 +246,8 @@ export default function NodeFormScreen() {
       listenPort,
       modelDir: modelDir.trim() || '~/models',
       llamaServerPath: llamaServerPath.trim(),
+      vllmImage: vllmImage.trim(),
+      selectedModel: selectedModel.trim(),
       serverParams,
     };
   }
@@ -221,6 +285,16 @@ export default function NodeFormScreen() {
         applyNode(await nodeService.update(nodeId, payload));
         setNotice(`Node "${payload.name}" saved`);
       } else if (clusterId) {
+        try {
+          await clusterService.get(clusterId);
+        } catch (err) {
+          setError(
+            errorMessage(err) === 'Not found'
+              ? 'This cluster is gone. Go back to Clusters and open the vLLM cluster again.'
+              : errorMessage(err),
+          );
+          return;
+        }
         const created = await nodeService.create(clusterId, payload);
         void refresh();
         navigate(`/nodes/${created.id}/edit`, {
@@ -264,7 +338,7 @@ export default function NodeFormScreen() {
           ← {loadedClusterId ? 'Cluster' : 'Clusters'}
         </Link>
         <h1 className="mt-3">{isEdit ? 'Edit node' : 'Register node'}</h1>
-        <p className="page-sub">llama.cpp · no login · SSH secrets stay on this laptop</p>
+        <p className="page-sub">{engineLabel(engine)} · no login · SSH secrets stay on this laptop</p>
       </div>
 
       {error ? <ErrorBanner message={error} /> : previewError ? <ErrorBanner message={previewError} /> : null}
@@ -413,7 +487,7 @@ export default function NodeFormScreen() {
                 />
               </Field>
             </div>
-            <Field label="API key" info="Optional Bearer token if llama-server was started with an API key.">
+            <Field label="API key" info={`Optional Bearer token if ${engineBinaryName(engine)} was started with an API key.`}>
               <input
                 type="password"
                 value={openaiApiKey}
@@ -423,7 +497,14 @@ export default function NodeFormScreen() {
                 autoComplete="off"
               />
             </Field>
-            <Field label="Hugging Face token" info="Optional token for gated GGUF downloads from Hugging Face.">
+            <Field
+              label="Hugging Face token"
+              info={
+                vllm
+                  ? 'Optional token for gated Hugging Face snapshots on this node.'
+                  : 'Optional token for gated GGUF downloads from Hugging Face.'
+              }
+            >
               <input
                 type="password"
                 value={hfToken}
@@ -438,10 +519,16 @@ export default function NodeFormScreen() {
 
         <Section title="Server">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Listen host" info="Address llama-server binds (--host). 0.0.0.0 accepts LAN clients.">
+            <Field
+              label="Listen host"
+              info={`Address ${engineBinaryName(engine)} binds (--host). 0.0.0.0 accepts LAN clients.`}
+            >
               <input value={listenHost} onChange={(event) => setListenHost(event.target.value)} className={inputClass} />
             </Field>
-            <Field label="Listen port" info="TCP port llama-server listens on (--port). Must match the OpenAI base URL.">
+            <Field
+              label="Listen port"
+              info={`TCP port ${engineBinaryName(engine)} listens on (--port). Must match the OpenAI base URL.`}
+            >
               <input
                 type="number"
                 value={listenPort}
@@ -450,36 +537,87 @@ export default function NodeFormScreen() {
               />
             </Field>
             <div className="sm:col-span-2">
-              <Field label="Model dir" info="Directory on the node where GGUF files are stored. ~/models is expanded on the machine.">
+              <Field
+                label="Model dir"
+                info={
+                  vllm
+                    ? 'Directory on the node where Hugging Face model folders live. ~/models is expanded on the machine.'
+                    : 'Directory on the node where GGUF files are stored. ~/models is expanded on the machine.'
+                }
+              >
                 <input value={modelDir} onChange={(event) => setModelDir(event.target.value)} className={inputClass} />
               </Field>
             </div>
-            <div className="sm:col-span-2">
-              <Field
-                label="llama-server path"
-                info="Full path to llama-server on the node. Leave empty to auto-detect (PATH, Homebrew, /opt/homebrew/bin, /usr/local/bin)."
-              >
-                <input
-                  value={llamaServerPath}
-                  onChange={(event) => setLlamaServerPath(event.target.value)}
-                  className={inputClass}
-                  placeholder="/opt/homebrew/bin/llama-server"
-                />
-              </Field>
-            </div>
+            {vllm ? (
+              <div className="sm:col-span-2">
+                <Field
+                  label="Docker image"
+                  info="ROCm vLLM image. Instinct MI210/MI300 use the cdna tag. Radeon cards use the rdna tag."
+                >
+                  <input
+                    value={vllmImage}
+                    onChange={(event) => setVllmImage(event.target.value)}
+                    className={inputClass}
+                    placeholder="rocm/vllm:rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0"
+                  />
+                </Field>
+              </div>
+            ) : (
+              <div className="sm:col-span-2">
+                <Field
+                  label="llama-server path"
+                  info="Full path to llama-server on the node. Leave empty to auto-detect (PATH, Homebrew, /opt/homebrew/bin, /usr/local/bin)."
+                >
+                  <input
+                    value={llamaServerPath}
+                    onChange={(event) => setLlamaServerPath(event.target.value)}
+                    className={inputClass}
+                    placeholder="/opt/homebrew/bin/llama-server"
+                  />
+                </Field>
+              </div>
+            )}
+            {vllm ? (
+              <div className="sm:col-span-2">
+                <Field
+                  label="Model to serve"
+                  info="Local folder name under the model dir, or a Hugging Face repo id such as Qwen/Qwen2.5-7B-Instruct."
+                >
+                  <input
+                    value={selectedModel}
+                    onChange={(event) => setSelectedModel(event.target.value)}
+                    className={inputClass}
+                    placeholder="Qwen/Qwen2.5-7B-Instruct"
+                  />
+                </Field>
+              </div>
+            ) : null}
           </div>
         </Section>
 
-        <ServerParamsFields
-          params={serverParams}
-          listenHost={listenHost}
-          listenPort={listenPort}
-          modelDir={modelDir}
-          onChange={setServerParams}
-          onPreviewError={setPreviewError}
-        />
+        {vllm ? (
+          <VllmParamsFields
+            params={serverParams}
+            listenHost={listenHost}
+            listenPort={listenPort}
+            modelDir={modelDir}
+            modelFilename={selectedModel || '$MODEL'}
+            vllmImage={vllmImage}
+            onChange={setServerParams}
+            onPreviewError={setPreviewError}
+          />
+        ) : (
+          <ServerParamsFields
+            params={serverParams}
+            listenHost={listenHost}
+            listenPort={listenPort}
+            modelDir={modelDir}
+            onChange={setServerParams}
+            onPreviewError={setPreviewError}
+          />
+        )}
 
-        {isEdit ? <SetupInstructions /> : null}
+        {isEdit ? <SetupInstructions engine={engine} /> : null}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-1">

@@ -14,6 +14,8 @@ class ForbiddenExtraFlagsError(ValueError):
 
 
 class LlamaCppEngine:
+    NAME = "llama.cpp"
+    BINARY_LABEL = "llama-server"
     PID_FILE = "~/.platformai/llama-server.pid"
     LOG_FILE = "~/.platformai/llama-server.log"
 
@@ -315,3 +317,9 @@ class LlamaCppEngine:
     def delete_model_command(model_dir: str, filename: str) -> str:
         dest = f"{model_dir.rstrip('/')}/{filename}"
         return f"rm -f {shlex.quote(dest)}"
+
+    @staticmethod
+    def delete_job_command(job_id: str) -> str:
+        job_dir = f"$HOME/.platformai/downloads/{job_id}"
+        legacy = f"$HOME/~/.platformai/downloads/{job_id}"
+        return f"rm -rf {job_dir} {legacy}; echo DELETED"

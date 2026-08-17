@@ -21,6 +21,7 @@ Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 - `_ai/local-vs-ssh.md`
 - `_ai/runbook.md`
 - `_ai/ui.md`
+- `_ai/vllm-engine.md`
 - `api/.pytest_cache/README.md`
 - `api/__init__.py`
 - `api/config.py`
@@ -28,6 +29,7 @@ Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 - `api/engines/__init__.py`
 - `api/engines/base.py`
 - `api/engines/llama_cpp.py`
+- `api/engines/vllm.py`
 - `api/helpers.py`
 - `api/logger.py`
 - `api/main.py`
@@ -57,6 +59,7 @@ Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 - `api/tests/test_openai_proxy.py`
 - `api/tests/test_ssh.py`
 - `api/tests/test_status_cache.py`
+- `api/tests/test_vllm_argv.py`
 - `docker-compose.yml`
 - `docs/superpowers/plans/2026-08-15-platformai-control-plane.md`
 - `docs/superpowers/specs/2026-08-15-platformai-control-plane-design.md`
@@ -72,9 +75,11 @@ Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 - `ui/components/Sidebar.tsx`
 - `ui/components/StatusIcon.tsx`
 - `ui/components/SuccessModal.tsx`
+- `ui/components/VllmParamsFields.tsx`
 - `ui/contexts/ClusterContext.tsx`
 - `ui/index.css`
 - `ui/index.tsx`
+- `ui/lib/engine.ts`
 - `ui/lib/errors.ts`
 - `ui/lib/format.ts`
 - `ui/routes/index.tsx`

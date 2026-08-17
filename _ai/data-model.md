@@ -13,7 +13,7 @@ Database name: `platformai`. Test DB: `platformai_test`.
 | Field | Notes |
 |---|---|
 | `name` | required, unique |
-| `engine` | v1 always `llama.cpp` |
+| `engine` | `llama.cpp` or `vllm` |
 | `description` | optional |
 | `createdAt` / `updatedAt` | |
 
@@ -32,15 +32,18 @@ Delete is **409** `Cluster has nodes` while any node remains.
 | `openaiApiKey`, `hfToken` | optional |
 | `listenHost` / `listenPort` | default `0.0.0.0` / `8080` |
 | `modelDir` | default `~/models` |
+| `engine` | copied from the parent cluster on create |
 | `llamaServerPath` | optional full path to `llama-server`; empty = auto-detect |
-| `serverParams` | see [[llama-cpp-engine]] |
+| `vllmImage` | ROCm Docker image for vLLM; empty = Instinct CDNA default |
+| `selectedModel` | required to start vLLM (local folder or `org/model`) |
+| `serverParams` | see [[llama-cpp-engine]] or [[vllm-engine]] |
 | `lastStart` | `{ modelFilename, argv, startedAt }` or null |
 | `lastOpenAICheck` | `{ openai, checkedAt, models, detail }` — last `/v1/models` probe |
 | `statusCache` | `{ ssh, openai, running, pid, models, detail, checkedAt }` — full probe, reused for 30 min |
-| `modelsCache` | `{ items, checkedAt }` — GGUF dir listing, reused for 30 min |
+| `modelsCache` | `{ items, checkedAt }` — model dir listing, reused for 30 min |
 
 API responses use camelCase. Mongo `_id` becomes `id`. Responses include SSH secrets so the local edit form can round-trip.
 
 ## Related
 
-[[local-vs-ssh]] · [[api]] · [[decisions]]
+[[local-vs-ssh]] · [[api]] · [[decisions]] · [[vllm-engine]]

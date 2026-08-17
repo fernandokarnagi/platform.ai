@@ -21,7 +21,8 @@ _ai/
 ├── data-model.md         Mongo collections
 ├── api.md                HTTP surface
 ├── local-vs-ssh.md       localhost vs remote nodes
-├── llama-cpp-engine.md   argv and process control
+├── llama-cpp-engine.md   llama.cpp argv and process control
+├── vllm-engine.md        vLLM argv, snapshots, process control
 ├── ui.md                 screens and theme
 ├── runbook.md            start / stop / first run
 ├── decisions.md          locked choices
@@ -42,7 +43,7 @@ _ai/
 | You change | You also update |
 |---|---|
 | Routes, models, helpers | `./scripts/update-brain.sh` (or commit — hook runs it) |
-| SSH / localhost / engine start | [[local-vs-ssh]], [[llama-cpp-engine]] |
+| SSH / localhost / engine start | [[local-vs-ssh]], [[llama-cpp-engine]], [[vllm-engine]] |
 | Screens, theme | [[ui]] |
 | Ports, start/stop | [[runbook]] |
 | A locked product choice | [[decisions]] |

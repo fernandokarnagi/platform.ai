@@ -6,6 +6,7 @@ import ModelRadios from '@components/ModelRadios';
 import StatusIcon from '@components/StatusIcon';
 import { useClusters } from '@contexts/ClusterContext';
 import { usefulDetail } from '@/lib/errors';
+import { engineBinaryName, isVllm } from '@/lib/engine';
 import { formatDateTime, formatFileTime } from '@/lib/format';
 import { nodeService } from '@services/nodeService';
 import type {
@@ -361,10 +362,16 @@ export default function NodeDetailScreen() {
 
   async function handleStart() {
     if (!id) return;
+    const vllm = isVllm(node?.engine);
+    const model = node?.selectedModel || (vllm && models.length === 1 ? models[0].name : '');
+    if (vllm && !model) {
+      setError('Select a model to serve before starting vLLM');
+      return;
+    }
     setBusy('start');
     setError(null);
     try {
-      setEngine(await nodeService.start(id));
+      setEngine(await nodeService.start(id, vllm ? model : undefined));
       await refreshAfterEngine(true);
       await fetchLogs();
     } catch (err) {
@@ -477,6 +484,10 @@ export default function NodeDetailScreen() {
       setError('Hugging Face repo is required');
       return;
     }
+    if (payload.source === 'huggingface' && !isVllm(node?.engine) && !payload.filename) {
+      setError('Choose a GGUF file from the repo');
+      return;
+    }
     if (payload.source === 'url' && !payload.url) {
       setError('URL is required');
       return;
@@ -503,6 +514,16 @@ export default function NodeDetailScreen() {
     } catch (err) {
       setError(errorMessage(err));
       setBusy(null);
+    }
+  }
+
+  async function handleSelectModel(name: string) {
+    if (!id || !node) return;
+    setError(null);
+    try {
+      setNode(await nodeService.update(id, { selectedModel: name }));
+    } catch (err) {
+      setError(errorMessage(err));
     }
   }
 
@@ -610,6 +631,7 @@ export default function NodeDetailScreen() {
   }
 
   const running = Boolean(engine?.running);
+  const vllm = isVllm(node?.engine);
   const backTo = node ? `/clusters/${node.clusterId}` : '/';
   const served = status?.models ?? [];
   const visibleMessages = [...messages].reverse();
@@ -806,7 +828,7 @@ export default function NodeDetailScreen() {
 
           {showLogs ? (
             <Section
-              title="llama-server log"
+              title={`${engineBinaryName(node?.engine)} log`}
               className="node-logs"
               actions={
                 <div className="flex flex-wrap gap-2">
@@ -824,7 +846,9 @@ export default function NodeDetailScreen() {
               }
             >
               {logMissing ? (
-                <p className="muted">No log yet. Start the engine to create ~/.platformai/llama-server.log.</p>
+                <p className="muted">
+                  No log yet. Start the engine to create ~/.platformai/{vllm ? 'vllm.log' : 'llama-server.log'}.
+                </p>
               ) : (
                 <pre ref={logRef} className="log-tail">
                   {logText.trim() ? logText : logLoading ? 'Reading…' : 'Log is empty.'}
@@ -930,11 +954,18 @@ export default function NodeDetailScreen() {
               </div>
               {engine?.lastStart ? (
                 <p className="muted">
-                  Last start --models-dir {node?.modelDir ?? '~/models'}
+                  Last start{' '}
+                  {vllm
+                    ? engine.lastStart.modelFilename || node?.selectedModel || 'model'
+                    : `--models-dir ${node?.modelDir ?? '~/models'}`}
                   {engine.lastStart.startedAt ? ` · ${formatStamp(engine.lastStart.startedAt)}` : ''}
                 </p>
               ) : (
-                <p className="muted">No previous start. Start loads every GGUF in the model dir.</p>
+                <p className="muted">
+                  {vllm
+                    ? 'No previous start. Pick a local snapshot or a Hugging Face repo id, then Start.'
+                    : 'No previous start. Start loads every GGUF in the model dir.'}
+                </p>
               )}
             </Section>
 
@@ -954,27 +985,45 @@ export default function NodeDetailScreen() {
               {!modelsKnown ? (
                 <p className="muted">Model dir not checked yet.</p>
               ) : models.length === 0 ? (
-                <p className="muted">No GGUF files in {node?.modelDir ?? '~/models'}.</p>
+                <p className="muted">
+                  {vllm ? 'No Hugging Face model folders in' : 'No GGUF files in'} {node?.modelDir ?? '~/models'}.
+                </p>
               ) : (
                 <ul className="model-list">
-                  {models.map((model) => (
-                    <li key={model.name} className="model-row">
-                      <div className="model-meta">
-                        <div className="model-name">{model.name}</div>
-                        <div className="muted">
-                          {formatBytes(model.sizeBytes)} · {formatFileTime(model.mtime)}
+                  {models.map((model) => {
+                    const selected = node?.selectedModel === model.name;
+                    return (
+                      <li key={model.name} className="model-row">
+                        <div className="model-meta">
+                          <div className="model-name">{model.name}</div>
+                          <div className="muted">
+                            {formatBytes(model.sizeBytes)} · {formatFileTime(model.mtime)}
+                            {selected ? ' · serving' : ''}
+                          </div>
                         </div>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={busy !== null}
-                        className="toggle danger"
-                        onClick={() => void handleDelete(model.name)}
-                      >
-                        Delete
-                      </button>
-                    </li>
-                  ))}
+                        <div className="flex flex-wrap gap-2">
+                          {vllm ? (
+                            <button
+                              type="button"
+                              disabled={busy !== null || selected}
+                              className={selected ? 'toggle accent' : 'toggle'}
+                              onClick={() => void handleSelectModel(model.name)}
+                            >
+                              {selected ? 'Selected' : 'Serve'}
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            disabled={busy !== null}
+                            className="toggle danger"
+                            onClick={() => void handleDelete(model.name)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </Section>
@@ -1018,30 +1067,40 @@ export default function NodeDetailScreen() {
                     autoFocus
                   />
                 </label>
-                <label>
-                  <span className="field-label">File</span>
-                  {hfFiles.length > 0 ? (
-                    <select
-                      value={downloadFilename}
-                      onChange={(event) => setDownloadFilename(event.target.value)}
-                      className={inputClass}
-                    >
-                      {hfFiles.map((file) => (
-                        <option key={file.name} value={file.name}>
-                          {file.name.split('/').pop()} ({formatBytes(file.sizeBytes)})
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      value={downloadFilename}
-                      onChange={(event) => setDownloadFilename(event.target.value)}
-                      className={inputClass}
-                      placeholder={hfListing ? 'Listing GGUFs…' : 'model.gguf'}
-                      disabled={hfListing}
-                    />
-                  )}
-                </label>
+                {vllm ? (
+                  <p className="muted">
+                    {hfListing
+                      ? 'Checking repo…'
+                      : hfFiles.length
+                        ? `Snapshot · ${hfFiles.length} files · ${formatBytes(hfFiles.reduce((sum, file) => sum + (file.sizeBytes || 0), 0))}`
+                        : 'Downloads the full Hugging Face snapshot into the model dir.'}
+                  </p>
+                ) : (
+                  <label>
+                    <span className="field-label">File</span>
+                    {hfFiles.length > 0 ? (
+                      <select
+                        value={downloadFilename}
+                        onChange={(event) => setDownloadFilename(event.target.value)}
+                        className={inputClass}
+                      >
+                        {hfFiles.map((file) => (
+                          <option key={file.name} value={file.name}>
+                            {file.name.split('/').pop()} ({formatBytes(file.sizeBytes)})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={downloadFilename}
+                        onChange={(event) => setDownloadFilename(event.target.value)}
+                        className={inputClass}
+                        placeholder={hfListing ? 'Listing GGUFs…' : 'model.gguf'}
+                        disabled={hfListing}
+                      />
+                    )}
+                  </label>
+                )}
                 {hfListError ? <p className="muted">{hfListError}</p> : null}
               </>
             ) : (

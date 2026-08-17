@@ -1,7 +1,7 @@
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 from api.database import get_database
-from api.engines.llama_cpp import LlamaCppEngine
+from api.engines import get_engine
 from api.helpers import download_helper, parse_object_id
 from api.services import ssh as ssh_mod
 
@@ -37,9 +37,10 @@ async def cancel_download(job_id: str):
     node = await db.nodes.find_one({"_id": doc["nodeId"]}) if doc.get("nodeId") else None
     if node:
         try:
+            engine = get_engine(node.get("engine") or doc.get("engine"))
             await ssh_mod.run_command(
                 node,
-                LlamaCppEngine.cancel_download_command(doc["modelDir"], doc["filename"], str(doc["_id"])),
+                engine.cancel_download_command(doc["modelDir"], doc["filename"], str(doc["_id"])),
             )
         except ssh_mod.SshError:
             pass
@@ -76,7 +77,7 @@ async def retry_download(job_id: str):
     try:
         started = await ssh_mod.run_command(
             node,
-            LlamaCppEngine.start_download_command(
+            get_engine(node.get("engine") or doc.get("engine")).start_download_command(
                 doc["modelDir"], doc["filename"], doc["url"], str(doc["_id"]), token
             ),
         )
@@ -109,3 +110,28 @@ async def retry_download(job_id: str):
     await db.nodes.update_one({"_id": node["_id"]}, {"$unset": {"modelsCache": ""}})
     updated = await db.downloads.find_one({"_id": doc["_id"]})
     return download_helper(updated)
+
+
+@router.delete("/downloads/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_download(job_id: str):
+    db = get_database()
+    doc = await db.downloads.find_one({"_id": parse_object_id(job_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    node = await db.nodes.find_one({"_id": doc["nodeId"]}) if doc.get("nodeId") else None
+    engine = get_engine((node or {}).get("engine") or doc.get("engine"))
+    if node and doc.get("status") in ("queued", "running"):
+        try:
+            await ssh_mod.run_command(
+                node,
+                engine.cancel_download_command(doc["modelDir"], doc["filename"], str(doc["_id"])),
+            )
+        except ssh_mod.SshError:
+            pass
+    if node:
+        try:
+            await ssh_mod.run_command(node, engine.delete_job_command(str(doc["_id"])))
+        except ssh_mod.SshError:
+            pass
+    await db.downloads.delete_one({"_id": doc["_id"]})
+    return None

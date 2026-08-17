@@ -18,10 +18,11 @@ Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 | GET | `/clusters/{cluster_id}/nodes` | `nodes.py` |
 | POST | `/clusters/{cluster_id}/nodes` | `nodes.py` |
 | GET | `/downloads` | `downloads.py` |
+| DELETE | `/downloads/{job_id}` | `downloads.py` |
 | GET | `/downloads/{job_id}` | `downloads.py` |
 | POST | `/downloads/{job_id}/cancel` | `downloads.py` |
 | POST | `/downloads/{job_id}/retry` | `downloads.py` |
-| POST | `/engines/llama.cpp/preview` | `engines.py` |
+| POST | `/engines/{engine_name}/preview` | `engines.py` |
 | GET | `/health` | `main.py` |
 | DELETE | `/nodes/{node_id}` | `nodes.py` |
 | GET | `/nodes/{node_id}` | `nodes.py` |

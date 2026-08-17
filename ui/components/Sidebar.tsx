@@ -19,7 +19,7 @@ export default function Sidebar() {
         </NavLink>
       </nav>
       <span className="spacer" />
-      <span className="meta">llama.cpp · local</span>
+      <span className="meta">llama.cpp / vLLM · local</span>
     </header>
   );
 }

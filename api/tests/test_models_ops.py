@@ -302,6 +302,31 @@ async def test_download_retry_missing(app):
         assert missing.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_delete_download_removes_row(app, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ssh_mod, "run_command", _download_fake_run(seen))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed(client)
+        started = await client.post(
+            f"/nodes/{node['id']}/models/download",
+            json={"source": "url", "url": "https://example.com/del.gguf", "filename": "del.gguf"},
+        )
+        job_id = started.json()["id"]
+        deleted = await client.delete(f"/downloads/{job_id}")
+        assert deleted.status_code == 204
+        assert (await client.get(f"/downloads/{job_id}")).status_code == 404
+        listed = await client.get("/downloads")
+        assert all(item["id"] != job_id for item in listed.json())
+
+
+@pytest.mark.asyncio
+async def test_delete_download_missing(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        missing = await client.delete("/downloads/64b64b64b64b64b64b64b64b")
+        assert missing.status_code == 404
+
+
 def test_start_download_command_clears_stale_job_files():
     cmd = LlamaCppEngine.start_download_command("/tmp/models", "a.gguf", "https://example.com/a.gguf", "job1")
     assert "rm -f" in cmd
@@ -352,7 +377,7 @@ async def test_list_downloads_reads_db_only(app, monkeypatch):
 async def test_list_hf_repo_files(app, monkeypatch):
     from api.routes import nodes as nodes_mod
 
-    async def fake_details(repo, revision, token):
+    async def fake_details(repo, revision, token, suffixes=(".gguf",)):
         assert repo == "org/model"
         return [{"name": "a-F16.gguf", "sizeBytes": 10}, {"name": "a-Q8_0.gguf", "sizeBytes": 5}]
 

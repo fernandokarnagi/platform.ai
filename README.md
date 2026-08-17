@@ -1,6 +1,6 @@
 # Platform.AI
 
-Local control plane for llama.cpp inferencing clusters.
+Local control plane for llama.cpp and vLLM inferencing clusters.
 
 ## Start
 
@@ -26,4 +26,4 @@ No login. Do not expose the API.
 1. Create cluster `desk-macs`.
 2. Register a Mac node (SSH user + password or key).
 3. Follow the Homebrew steps on the form.
-4. Test SSH, download a GGUF, set launch params, Start, Chat.
+4. Test SSH, download a GGUF (llama.cpp) or an HF snapshot (vLLM), set launch params, Start, Chat.

@@ -6,18 +6,19 @@ updated: 2026-08-17
 
 # Platform.AI
 
-Local control plane for llama.cpp inferencing clusters. React UI talks only to FastAPI. FastAPI owns Mongo, SSH (or local shell), and OpenAI-compatible proxies.
+Local control plane for llama.cpp and vLLM inferencing clusters. React UI talks only to FastAPI. FastAPI owns Mongo, SSH (or local shell), and OpenAI-compatible proxies.
 
 ## Read in this order
 
 1. [[architecture]] — three processes, who talks to whom
 2. [[data-model]] — clusters and nodes
 3. [[local-vs-ssh]] — localhost needs no SSH
-4. [[llama-cpp-engine]] — launch params and process control
-5. [[api]] — HTTP surface (see also [[generated/api-map]])
-6. [[ui]] — screens and Agent OS look
-7. [[runbook]] — `./start.sh`
-8. [[decisions]] — locked product choices
+4. [[llama-cpp-engine]] — llama.cpp launch params and process control
+5. [[vllm-engine]] — vLLM launch params, snapshots, process control
+6. [[api]] — HTTP surface (see also [[generated/api-map]])
+7. [[ui]] — screens and Agent OS look
+8. [[runbook]] — `./start.sh`
+9. [[decisions]] — locked product choices
 
 ## Repo map
 

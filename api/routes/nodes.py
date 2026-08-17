@@ -1,8 +1,9 @@
 from datetime import datetime
+import asyncio
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
 from api.database import get_database
-from api.engines.llama_cpp import ForbiddenExtraFlagsError, LlamaCppEngine
+from api.engines import ForbiddenExtraFlagsError, get_engine as resolve_engine
 from api.helpers import (
     apply_node_location,
     download_helper,
@@ -39,6 +40,19 @@ async def _require_node(db, node_id: str):
     return doc
 
 
+async def _cluster_engine_name(db, cluster_id) -> str:
+    cluster = await db.clusters.find_one({"_id": cluster_id}) if cluster_id is not None else None
+    return (cluster or {}).get("engine") or "llama.cpp"
+
+
+async def _engine_for(db, node: dict):
+    name = node.get("engine") or await _cluster_engine_name(db, node.get("clusterId"))
+    try:
+        return resolve_engine(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/clusters/{cluster_id}/nodes")
 async def list_nodes(cluster_id: str):
     db = get_database()
@@ -65,6 +79,7 @@ async def create_node(cluster_id: str, payload: NodeIn):
         payload.host,
     )
     doc["clusterId"] = oid
+    doc["engine"] = await _cluster_engine_name(db, oid)
     doc["lastStart"] = None
     doc["createdAt"] = now
     doc["updatedAt"] = now
@@ -133,10 +148,39 @@ async def test_ssh(node_id: str):
         raise HTTPException(status_code=502, detail=f"{label} failed: {result.stderr or result.stdout}")
     uname = (result.stdout or "").strip().splitlines()[0] if result.stdout.strip() else ""
     try:
-        binary = await _resolve_binary(node)
+        binary = await _resolve_binary(node, await _engine_for(db, node))
     except HTTPException as exc:
         raise HTTPException(status_code=502, detail=f"{label} failed: {exc.detail}") from exc
     return {"ok": True, "local": local, "uname": uname, "llamaServer": binary}
+
+
+def _vllm_crash_detail(log: str) -> str:
+    text = log or ""
+    if "0 devices" in text or "out of bounds for 0 devices" in text:
+        return "vLLM sees 0 GPUs (no CUDA). Install the NVIDIA driver on the node so nvidia-smi works, then restart."
+    if "libcuda.so.1" in text:
+        return "vLLM cannot load libcuda.so.1. The NVIDIA driver is missing on this node."
+    if "CUDA out of memory" in text or "OutOfMemory" in text:
+        return "vLLM ran out of GPU memory. Lower gpu memory util or use a smaller model."
+    if "Engine core initialization failed" in text:
+        return "vLLM engine core failed to start. Open the log for the traceback."
+    return "vLLM process died after start. Open the log."
+
+
+async def _confirm_vllm_stayed_up(node: dict, engine, pid: str) -> None:
+    for _ in range(5):
+        await asyncio.sleep(1)
+        alive = await ssh_mod.run_command(node, engine.pid_alive_command(pid))
+        if "alive" in alive.stdout:
+            continue
+        hint = "vLLM process died after start. Open the log."
+        try:
+            tailed = await ssh_mod.run_command(node, engine.tail_log_command(200))
+            hint = _vllm_crash_detail(tailed.stdout or "")
+        except ssh_mod.SshError:
+            pass
+        raise HTTPException(status_code=502, detail=hint)
+    return None
 
 
 def _last_line(stdout: str) -> str:
@@ -144,27 +188,34 @@ def _last_line(stdout: str) -> str:
     return lines[-1] if lines else ""
 
 
-async def _expand_dir(node):
+async def _expand_dir(node, engine):
     model_dir = node.get("modelDir") or "~/models"
-    result = await ssh_mod.run_command(node, LlamaCppEngine.expand_model_dir_command(model_dir))
+    result = await ssh_mod.run_command(node, engine.expand_model_dir_command(model_dir))
     expanded = _last_line(result.stdout)
     if not expanded:
         raise HTTPException(status_code=502, detail="SSH failed: empty modelDir")
     return expanded
 
 
-async def _resolve_binary(node):
+async def _resolve_binary(node, engine):
+    label = getattr(engine, "BINARY_LABEL", "llama-server")
+    if getattr(engine, "NAME", "") == "vllm":
+        result = await ssh_mod.run_command(node, engine.resolve_binary_command())
+        binary = result.stdout.strip().splitlines()[0] if result.stdout.strip() else "MISSING"
+        if binary == "MISSING":
+            raise HTTPException(status_code=502, detail="docker not found on node")
+        return binary
     configured = (node.get("llamaServerPath") or "").strip()
     if configured:
-        result = await ssh_mod.run_command(node, LlamaCppEngine.verify_binary_command(configured))
+        result = await ssh_mod.run_command(node, engine.verify_binary_command(configured))
         binary = _last_line(result.stdout) or "MISSING"
         if binary == "MISSING":
-            raise HTTPException(status_code=502, detail=f"llama-server not found at {configured}")
+            raise HTTPException(status_code=502, detail=f"{label} not found at {configured}")
         return binary
-    result = await ssh_mod.run_command(node, LlamaCppEngine.resolve_binary_command())
+    result = await ssh_mod.run_command(node, engine.resolve_binary_command())
     binary = result.stdout.strip().splitlines()[0] if result.stdout.strip() else "MISSING"
     if binary == "MISSING":
-        raise HTTPException(status_code=502, detail="llama-server not found on node")
+        raise HTTPException(status_code=502, detail=f"{label} not found on node")
     return binary
 
 
@@ -176,7 +227,7 @@ async def get_engine(node_id: str, refresh: bool = Query(False)):
         status_body = await status_cache_mod.get_engine(db, node, refresh=refresh)
         if refresh:
             try:
-                status_body["llamaServer"] = await _resolve_binary(node)
+                status_body["llamaServer"] = await _resolve_binary(node, await _engine_for(db, node))
             except HTTPException:
                 status_body["llamaServer"] = None
         return status_body
@@ -188,22 +239,37 @@ async def get_engine(node_id: str, refresh: bool = Query(False)):
 async def start_engine(node_id: str, payload: StartEngineIn):
     db = get_database()
     node = await _require_node(db, node_id)
+    engine = await _engine_for(db, node)
     try:
         current = await engine_mod.engine_status(node)
         if current["running"]:
             raise HTTPException(status_code=409, detail="Engine already running")
-        model_dir = await _expand_dir(node)
-        binary = await _resolve_binary(node)
-        argv = LlamaCppEngine.build_argv(node, model_dir)
-        started = await ssh_mod.run_command(node, LlamaCppEngine.start_command(binary, argv), timeout=20)
+        model_dir = await _expand_dir(node, engine)
+        binary = await _resolve_binary(node, engine)
+        selected = (payload.modelFilename or node.get("selectedModel") or "").strip()
+        if getattr(engine, "NAME", "") == "vllm" and not selected:
+            raise HTTPException(status_code=400, detail="Select a model before starting vLLM")
+        start_node = {**node, "selectedModel": selected, "modelFilename": selected}
+        argv = engine.build_argv(start_node, model_dir)
+        if getattr(engine, "NAME", "") == "vllm":
+            started = await ssh_mod.run_command(
+                node, engine.start_command(binary, argv, start_node), timeout=180
+            )
+        else:
+            started = await ssh_mod.run_command(node, engine.start_command(binary, argv), timeout=20)
         pid = _last_line(started.stdout)
         if not pid:
             raise HTTPException(status_code=502, detail="SSH failed: engine did not start")
-        alive = await ssh_mod.run_command(node, LlamaCppEngine.pid_alive_command(pid))
+        alive = await ssh_mod.run_command(node, engine.pid_alive_command(pid))
         if "alive" not in alive.stdout:
             raise HTTPException(status_code=502, detail="SSH failed: engine did not start")
-        last_start = {"modelFilename": "", "argv": argv, "startedAt": datetime.utcnow().isoformat()}
-        await db.nodes.update_one({"_id": node["_id"]}, {"$set": {"lastStart": last_start, "updatedAt": datetime.utcnow()}})
+        if getattr(engine, "NAME", "") == "vllm":
+            await _confirm_vllm_stayed_up(node, engine, pid)
+        last_start = {"modelFilename": selected, "argv": argv, "startedAt": datetime.utcnow().isoformat()}
+        started_fields = {"lastStart": last_start, "updatedAt": datetime.utcnow()}
+        if selected:
+            started_fields["selectedModel"] = selected
+        await db.nodes.update_one({"_id": node["_id"]}, {"$set": started_fields})
         await status_cache_mod.touch_engine(db, node, True, pid)
         return {"running": True, "pid": pid, "lastStart": last_start}
     except ForbiddenExtraFlagsError as exc:
@@ -221,7 +287,8 @@ async def engine_logs(node_id: str, lines: int = Query(200, ge=20, le=1000)):
     db = get_database()
     node = await _require_node(db, node_id)
     try:
-        result = await ssh_mod.run_command(node, LlamaCppEngine.tail_log_command(lines))
+        engine = await _engine_for(db, node)
+        result = await ssh_mod.run_command(node, engine.tail_log_command(lines))
     except ssh_mod.SshError as exc:
         raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
     if result.exit_status != 0:
@@ -236,7 +303,8 @@ async def stop_engine(node_id: str):
     db = get_database()
     node = await _require_node(db, node_id)
     try:
-        await ssh_mod.run_command(node, LlamaCppEngine.stop_command(), timeout=20)
+        engine = await _engine_for(db, node)
+        await ssh_mod.run_command(node, engine.stop_command(), timeout=20)
         await status_cache_mod.touch_engine(db, node, False, None)
         return {"running": False, "pid": None, "lastStart": node.get("lastStart")}
     except ssh_mod.SshError as exc:
@@ -274,8 +342,9 @@ async def list_models(node_id: str, refresh: bool = Query(False)):
         cache = node.get("modelsCache") or {}
         return list(cache.get("items") or [])
     try:
-        model_dir = await _expand_dir(node)
-        result = await ssh_mod.run_command(node, LlamaCppEngine.list_models_command(model_dir))
+        engine = await _engine_for(db, node)
+        model_dir = await _expand_dir(node, engine)
+        result = await ssh_mod.run_command(node, engine.list_models_command(model_dir))
     except ssh_mod.SshError as exc:
         raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
     if result.exit_status != 0:
@@ -292,11 +361,16 @@ async def list_models(node_id: str, refresh: bool = Query(False)):
     return items
 
 
-async def _list_hf_files(repo: str, revision: str, token: str) -> list[str]:
-    return [item["name"] for item in await _list_hf_file_details(repo, revision, token)]
+async def _list_hf_files(repo: str, revision: str, token: str, suffixes: tuple[str, ...] | None = (".gguf",)) -> list[str]:
+    return [item["name"] for item in await _list_hf_file_details(repo, revision, token, suffixes)]
 
 
-async def _list_hf_file_details(repo: str, revision: str, token: str) -> list[dict]:
+async def _list_hf_file_details(
+    repo: str,
+    revision: str,
+    token: str,
+    suffixes: tuple[str, ...] | None = (".gguf",),
+) -> list[dict]:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -314,12 +388,15 @@ async def _list_hf_file_details(repo: str, revision: str, token: str) -> list[di
     files = []
     for item in data:
         path = str((item or {}).get("path") or "")
-        if (item or {}).get("type") == "file" and path.lower().endswith(".gguf"):
-            try:
-                size = int((item or {}).get("size") or 0)
-            except (TypeError, ValueError):
-                size = 0
-            files.append({"name": path, "sizeBytes": size})
+        if (item or {}).get("type") != "file" or not path:
+            continue
+        if suffixes and not any(path.lower().endswith(suffix) for suffix in suffixes):
+            continue
+        try:
+            size = int((item or {}).get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        files.append({"name": path, "sizeBytes": size})
     return files
 
 
@@ -327,13 +404,16 @@ async def _list_hf_file_details(repo: str, revision: str, token: str) -> list[di
 async def list_hf_repo_files(node_id: str, repo: str = Query(...)):
     db = get_database()
     node = await _require_node(db, node_id)
-    parsed = LlamaCppEngine.parse_hf_ref(repo, "")
+    engine = await _engine_for(db, node)
+    parsed = engine.parse_hf_ref(repo, "")
     if not parsed["repo"] or "/" not in parsed["repo"]:
         raise HTTPException(status_code=400, detail="repo must look like org/model")
     token = node.get("hfToken") or ""
-    files = await _list_hf_file_details(parsed["repo"], parsed["revision"], token)
+    suffixes = None if getattr(engine, "NAME", "") == "vllm" else (".gguf",)
+    files = await _list_hf_file_details(parsed["repo"], parsed["revision"], token, suffixes)
     if not files:
-        raise HTTPException(status_code=404, detail="No GGUF files found in that repo")
+        detail = "No files found in that repo" if suffixes is None else "No GGUF files found in that repo"
+        raise HTTPException(status_code=404, detail=detail)
     return {
         "repo": parsed["repo"],
         "revision": parsed["revision"],
@@ -346,28 +426,36 @@ async def list_hf_repo_files(node_id: str, repo: str = Query(...)):
 async def download_model(node_id: str, payload: DownloadModelIn):
     db = get_database()
     node = await _require_node(db, node_id)
+    engine = await _engine_for(db, node)
     try:
+        parsed = {"repo": "", "revision": "main", "filename": "", "quant": ""}
+        picked = ""
         if payload.source == "huggingface":
             if not payload.repo:
                 raise HTTPException(status_code=400, detail="repo required")
             token = payload.hfToken or node.get("hfToken") or ""
-            parsed = LlamaCppEngine.parse_hf_ref(payload.repo, payload.filename or "")
+            parsed = engine.parse_hf_ref(payload.repo, payload.filename or "")
             if not parsed["repo"] or "/" not in parsed["repo"]:
                 raise HTTPException(status_code=400, detail="repo must look like org/model")
-            files = await _list_hf_files(parsed["repo"], parsed["revision"], token)
-            picked = LlamaCppEngine.pick_hf_filename(files, parsed["filename"], parsed["quant"])
-            if not picked:
-                if parsed["filename"]:
-                    picked = parsed["filename"]
-                elif files:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="File not found. Available: " + ", ".join(path.split("/")[-1] for path in files),
-                    )
-                else:
-                    raise HTTPException(status_code=400, detail="repo and filename required")
-            filename = safe_model_filename(picked.split("/")[-1])
-            url = LlamaCppEngine.hf_url(parsed["repo"], picked, parsed["revision"])
+            if getattr(engine, "NAME", "") == "vllm":
+                filename = safe_model_filename(engine.snapshot_dirname(parsed["repo"]))
+                url = parsed["repo"]
+                files = await _list_hf_file_details(parsed["repo"], parsed["revision"], token, None)
+            else:
+                files = await _list_hf_files(parsed["repo"], parsed["revision"], token)
+                picked = engine.pick_hf_filename(files, parsed["filename"], parsed["quant"])
+                if not picked:
+                    if parsed["filename"]:
+                        picked = parsed["filename"]
+                    elif files:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="File not found. Available: " + ", ".join(path.split("/")[-1] for path in files),
+                        )
+                    else:
+                        raise HTTPException(status_code=400, detail="repo and filename required")
+                filename = safe_model_filename(picked.split("/")[-1])
+                url = engine.hf_url(parsed["repo"], picked, parsed["revision"])
         elif payload.source == "url":
             if not payload.url:
                 raise HTTPException(status_code=400, detail="url required")
@@ -377,18 +465,28 @@ async def download_model(node_id: str, payload: DownloadModelIn):
             token = ""
         else:
             raise HTTPException(status_code=400, detail="source must be huggingface or url")
-        model_dir = await _expand_dir(node)
+        model_dir = await _expand_dir(node, engine)
         total = 0
         if payload.source == "huggingface":
-            for item in await _list_hf_file_details(parsed["repo"], parsed["revision"], token):
-                if item["name"] == picked or item["name"].endswith("/" + filename):
-                    total = int(item.get("sizeBytes") or 0)
-                    break
+            listed = await _list_hf_file_details(
+                parsed["repo"],
+                parsed["revision"],
+                token,
+                None if getattr(engine, "NAME", "") == "vllm" else (".gguf",),
+            )
+            if getattr(engine, "NAME", "") == "vllm":
+                total = sum(int(item.get("sizeBytes") or 0) for item in listed)
+            else:
+                for item in listed:
+                    if item["name"] == picked or item["name"].endswith("/" + filename):
+                        total = int(item.get("sizeBytes") or 0)
+                        break
         now = datetime.utcnow()
         job = {
             "nodeId": node["_id"],
             "clusterId": node.get("clusterId"),
             "nodeName": node.get("name") or "",
+            "engine": getattr(engine, "NAME", node.get("engine") or "llama.cpp"),
             "source": payload.source,
             "repo": parsed["repo"] if payload.source == "huggingface" else "",
             "filename": filename,
@@ -407,7 +505,7 @@ async def download_model(node_id: str, payload: DownloadModelIn):
         try:
             started = await ssh_mod.run_command(
                 node,
-                LlamaCppEngine.start_download_command(model_dir, filename, url, str(job["_id"]), token),
+                engine.start_download_command(model_dir, filename, url, str(job["_id"]), token),
             )
         except ssh_mod.SshError as exc:
             await db.downloads.update_one(
@@ -448,8 +546,9 @@ async def delete_model(node_id: str, payload: DeleteModelIn):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid filename") from exc
     try:
-        model_dir = await _expand_dir(node)
-        await ssh_mod.run_command(node, LlamaCppEngine.delete_model_command(model_dir, filename))
+        engine = await _engine_for(db, node)
+        model_dir = await _expand_dir(node, engine)
+        await ssh_mod.run_command(node, engine.delete_model_command(model_dir, filename))
     except ssh_mod.SshError as exc:
         raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
     await db.nodes.update_one({"_id": node["_id"]}, {"$unset": {"modelsCache": ""}})

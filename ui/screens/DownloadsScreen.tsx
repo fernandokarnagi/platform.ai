@@ -31,6 +31,7 @@ export default function DownloadsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -69,6 +70,19 @@ export default function DownloadsScreen() {
     }
   }
 
+  async function handleDelete(job: DownloadJob) {
+    if (!window.confirm(`Remove download "${job.filename}" from this list?`)) return;
+    setRemoving(job.id);
+    try {
+      await downloadService.remove(job.id);
+      setJobs((current) => current.filter((item) => item.id !== job.id));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setRemoving(null);
+    }
+  }
+
   async function handleRetry(job: DownloadJob) {
     setRetrying(job.id);
     try {
@@ -86,7 +100,7 @@ export default function DownloadsScreen() {
       <div className="page-head">
         <div>
           <h1>Downloads</h1>
-          <p className="page-sub">Background GGUF downloads on your nodes</p>
+          <p className="page-sub">Background model downloads on your nodes</p>
         </div>
         <button type="button" className="toggle" onClick={() => void load()}>
           Refresh
@@ -161,26 +175,36 @@ export default function DownloadsScreen() {
                   </td>
                   <td className="muted">{formatDateTime(job.createdAt)}</td>
                   <td>
-                    {job.status === 'running' || job.status === 'queued' ? (
+                    <div className="flex flex-wrap gap-2">
+                      {job.status === 'running' || job.status === 'queued' ? (
+                        <button
+                          type="button"
+                          className="toggle danger"
+                          disabled={cancelling === job.id || removing === job.id}
+                          onClick={() => void handleCancel(job)}
+                        >
+                          {cancelling === job.id ? 'Cancelling…' : 'Cancel'}
+                        </button>
+                      ) : null}
+                      {job.status === 'failed' || job.status === 'cancelled' ? (
+                        <button
+                          type="button"
+                          className="toggle"
+                          disabled={retrying === job.id || removing === job.id}
+                          onClick={() => void handleRetry(job)}
+                        >
+                          {retrying === job.id ? 'Retrying…' : 'Retry'}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="toggle danger"
-                        disabled={cancelling === job.id}
-                        onClick={() => void handleCancel(job)}
+                        disabled={removing === job.id || cancelling === job.id}
+                        onClick={() => void handleDelete(job)}
                       >
-                        {cancelling === job.id ? 'Cancelling…' : 'Cancel'}
+                        {removing === job.id ? 'Removing…' : 'Delete'}
                       </button>
-                    ) : null}
-                    {job.status === 'failed' || job.status === 'cancelled' ? (
-                      <button
-                        type="button"
-                        className="toggle"
-                        disabled={retrying === job.id}
-                        onClick={() => void handleRetry(job)}
-                      >
-                        {retrying === job.id ? 'Retrying…' : 'Retry'}
-                      </button>
-                    ) : null}
+                    </div>
                   </td>
                 </tr>
               );

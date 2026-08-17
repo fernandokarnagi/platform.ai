@@ -1,13 +1,14 @@
-from api.engines.llama_cpp import LlamaCppEngine
+from api.engines import get_engine
 from api.services import ssh as ssh_mod
 
 
 async def engine_status(node: dict) -> dict:
-    pid_res = await ssh_mod.run_command(node, LlamaCppEngine.read_pid_command())
+    engine = get_engine(node.get("engine"))
+    pid_res = await ssh_mod.run_command(node, engine.read_pid_command())
     pid = pid_res.stdout.strip()
     running = False
     if pid:
-        alive = await ssh_mod.run_command(node, LlamaCppEngine.pid_alive_command(pid))
+        alive = await ssh_mod.run_command(node, engine.pid_alive_command(pid))
         running = "alive" in alive.stdout
     return {"running": running, "pid": pid if running else None, "lastStart": node.get("lastStart")}
 

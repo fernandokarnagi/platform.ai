@@ -7,7 +7,7 @@ updated: 2026-08-16
 # Architecture
 
 ```
-[Browser :3091] --HTTP--> [FastAPI :8091] --SSH or local bash--> [Node: llama-server, modelDir]
+[Browser :3091] --HTTP--> [FastAPI :8091] --SSH or local bash--> [Node: llama-server or vllm, modelDir]
                               |                --HTTP--> [Node OpenAI URL /v1]
                               v
                      [Mongo :27091  platformai-mongodb]
@@ -17,7 +17,7 @@ updated: 2026-08-16
 
 - The browser never SSHs and never calls a node OpenAI URL.
 - The API is the only component that holds SSH secrets and talks to nodes.
-- Engine-specific logic lives in `LlamaCppEngine`. Other engines are a later plugin.
+- Engine-specific logic lives in `LlamaCppEngine` / `VllmEngine`. `get_engine(cluster.engine)` picks the class.
 - Mongo is the only Docker service in v1. API and UI run on the host so SSH to LAN Macs is straightforward.
 
 ## Processes
@@ -38,8 +38,9 @@ Use [[runbook]] / `./start.sh`. If the Mongo container already exists, start reu
 | `api/database.py` | Motor client, unique index on `clusters.name` |
 | `api/routes/clusters.py` | Cluster CRUD |
 | `api/routes/nodes.py` | Node CRUD + SSH/local + engine + models + chat |
-| `api/routes/engines.py` | `POST /engines/llama.cpp/preview` |
-| `api/engines/llama_cpp.py` | argv builder + remote/local shell scripts |
+| `api/routes/engines.py` | `POST /engines/{engine}/preview` |
+| `api/engines/llama_cpp.py` | llama.cpp argv + shell scripts |
+| `api/engines/vllm.py` | vLLM argv + snapshot download scripts |
 | `api/services/ssh.py` | `run_command` — SSH or local bash |
 | `api/services/openai_proxy.py` | `/models` and `/chat/completions` |
 | `api/helpers.py` | `is_local_host`, serialisers, `safe_model_filename` |
@@ -48,4 +49,4 @@ See [[generated/file-map]] for the current file list.
 
 ## Related
 
-[[data-model]] · [[api]] · [[local-vs-ssh]] · [[llama-cpp-engine]]
+[[data-model]] · [[api]] · [[local-vs-ssh]] · [[llama-cpp-engine]] · [[vllm-engine]]

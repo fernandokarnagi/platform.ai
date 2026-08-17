@@ -269,3 +269,166 @@ async def test_engine_logs_missing(app, monkeypatch):
         assert response.status_code == 200
         assert response.json()["missing"] is True
         assert response.json()["text"] == ""
+
+
+async def _seed_vllm(client):
+    cluster = (await client.post("/clusters", json={"name": "gpu-box", "engine": "vllm"})).json()
+    node = (
+        await client.post(
+            f"/clusters/{cluster['id']}/nodes",
+            json={
+                "name": "gpu-1",
+                "host": "192.168.1.20",
+                "sshUser": "fernando",
+                "sshAuthType": "password",
+                "sshPassword": "secret",
+                "openaiBaseUrl": "http://192.168.1.20:8000/v1",
+                "listenPort": 8000,
+                "selectedModel": "Qwen--Qwen2.5-7B-Instruct",
+            },
+        )
+    ).json()
+    return node
+
+
+@pytest.mark.asyncio
+async def test_create_vllm_cluster_and_node(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cluster = (await client.post("/clusters", json={"name": "gpu-box", "engine": "vllm"})).json()
+        assert cluster["engine"] == "vllm"
+        node = (
+            await client.post(
+                f"/clusters/{cluster['id']}/nodes",
+                json={
+                    "name": "gpu-1",
+                    "nodeType": "local",
+                    "openaiBaseUrl": "http://127.0.0.1:8000/v1",
+                    "listenPort": 8000,
+                },
+            )
+        ).json()
+        assert node["engine"] == "vllm"
+        assert node["listenPort"] == 8000
+
+
+@pytest.mark.asyncio
+async def test_vllm_start_stop(app, monkeypatch):
+    state = {"running": False}
+
+    async def fake_run(node, command, timeout=30.0):
+        if _expand_ok(command):
+            return FakeResult("/models\n")
+        if "command -v docker" in command:
+            return FakeResult("/usr/bin/docker\n")
+        if "State.Running" in command:
+            return FakeResult("true\nalive\n" if state["running"] else "false\n")
+        if "docker inspect" in command:
+            return FakeResult("abc123def456\n" if state["running"] else "")
+        if "docker run" in command:
+            assert "vllm serve" in command
+            assert "Qwen--Qwen2.5-7B-Instruct" in command
+            state["running"] = True
+            return FakeResult("abc123def456\n")
+        if "docker stop" in command or "docker rm" in command:
+            if "docker run" not in command:
+                state["running"] = False
+                return FakeResult("STOPPED\n")
+        return FakeResult("")
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_run)
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("api.routes.nodes.asyncio.sleep", no_sleep)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed_vllm(client)
+        started = await client.post(f"/nodes/{node['id']}/engine/start", json={})
+        assert started.status_code == 200
+        argv = " ".join(started.json()["lastStart"]["argv"])
+        assert argv.startswith("serve ")
+        assert "--tensor-parallel-size" in argv
+        assert started.json()["lastStart"]["modelFilename"] == "Qwen--Qwen2.5-7B-Instruct"
+        stopped = await client.post(f"/nodes/{node['id']}/engine/stop")
+        assert stopped.status_code == 200
+        assert stopped.json()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_vllm_start_requires_model(app, monkeypatch):
+    async def fake_run(node, command, timeout=30.0):
+        if _expand_ok(command):
+            return FakeResult("/models\n")
+        if "command -v docker" in command:
+            return FakeResult("/usr/bin/docker\n")
+        return FakeResult("")
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_run)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cluster = (await client.post("/clusters", json={"name": "gpu-box", "engine": "vllm"})).json()
+        node = (
+            await client.post(
+                f"/clusters/{cluster['id']}/nodes",
+                json={
+                    "name": "gpu-1",
+                    "host": "192.168.1.20",
+                    "sshUser": "fernando",
+                    "sshAuthType": "password",
+                    "sshPassword": "secret",
+                    "openaiBaseUrl": "http://192.168.1.20:8000/v1",
+                },
+            )
+        ).json()
+        response = await client.post(f"/nodes/{node['id']}/engine/start", json={})
+        assert response.status_code == 400
+        assert "model" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_vllm_binary_not_found(app, monkeypatch):
+    async def fake_run(node, command, timeout=30.0):
+        if _expand_ok(command):
+            return FakeResult("/models\n")
+        if "command -v docker" in command:
+            return FakeResult("MISSING\n")
+        return FakeResult("")
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_run)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed_vllm(client)
+        response = await client.post(f"/nodes/{node['id']}/engine/start", json={})
+        assert response.status_code == 502
+        assert response.json()["detail"] == "docker not found on node"
+
+
+@pytest.mark.asyncio
+async def test_vllm_start_dies_reports_no_gpu(app, monkeypatch):
+    checks = {"alive": 0}
+
+    async def fake_run(node, command, timeout=30.0):
+        if _expand_ok(command):
+            return FakeResult("/models\n")
+        if "command -v docker" in command:
+            return FakeResult("/usr/bin/docker\n")
+        if "docker run" in command:
+            checks["started"] = True
+            return FakeResult("aabbccddeeff\n")
+        if "State.Running" in command:
+            if not checks.get("started"):
+                return FakeResult("false\n")
+            checks["alive"] += 1
+            return FakeResult("true\nalive\n" if checks["alive"] == 1 else "false\n")
+        if "docker logs" in command:
+            return FakeResult("AssertionError: DP adjusted local rank 0 is out of bounds for 0 devices.\n")
+        return FakeResult("")
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_run)
+    monkeypatch.setattr("api.routes.nodes.asyncio.sleep", no_sleep)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed_vllm(client)
+        response = await client.post(f"/nodes/{node['id']}/engine/start", json={})
+        assert response.status_code == 502
+        assert "0 GPUs" in response.json()["detail"]

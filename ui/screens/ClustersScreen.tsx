@@ -40,12 +40,14 @@ export default function ClustersScreen() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [engine, setEngine] = useState<'llama.cpp' | 'vllm'>('llama.cpp');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   function openCreate() {
     setName('');
     setDescription('');
+    setEngine('llama.cpp');
     setCreating(true);
     setError(null);
     setNotice(null);
@@ -62,7 +64,7 @@ export default function ClustersScreen() {
     try {
       await clusterService.create({
         name: trimmed,
-        engine: 'llama.cpp',
+        engine,
         description: description.trim(),
       });
       setCreating(false);
@@ -82,7 +84,7 @@ export default function ClustersScreen() {
       <div className="page-head">
         <div>
           <h1>Clusters</h1>
-          <p className="page-sub">Inferencing clusters running llama.cpp</p>
+          <p className="page-sub">Inferencing clusters running llama.cpp or vLLM</p>
         </div>
         <button type="button" onClick={openCreate} className="toggle accent">
           Create cluster
@@ -164,7 +166,14 @@ export default function ClustersScreen() {
             </label>
             <label>
               <span className="field-label">Engine</span>
-              <input value="llama.cpp" readOnly className="field-input" />
+              <select
+                value={engine}
+                onChange={(event) => setEngine(event.target.value as 'llama.cpp' | 'vllm')}
+                className="field-input"
+              >
+                <option value="llama.cpp">llama.cpp</option>
+                <option value="vllm">vLLM</option>
+              </select>
             </label>
             <div className="modal-actions">
               <button type="button" onClick={() => setCreating(false)} className="toggle">

@@ -248,7 +248,8 @@ export default function ClusterDetailScreen() {
             </button>
             <button
               type="button"
-              onClick={() => id && navigate(`/clusters/${id}/nodes/new`)}
+              disabled={!cluster}
+              onClick={() => cluster && navigate(`/clusters/${cluster.id}/nodes/new`)}
               className="toggle accent"
             >
               Register node

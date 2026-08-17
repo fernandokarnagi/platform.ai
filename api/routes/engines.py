@@ -1,21 +1,28 @@
 from fastapi import APIRouter, HTTPException
-from api.engines.llama_cpp import ForbiddenExtraFlagsError, LlamaCppEngine
+from api.engines import ForbiddenExtraFlagsError, get_engine
 from api.models.models import PreviewIn
 
 router = APIRouter(tags=["engines"], prefix="/engines")
 
 
-@router.post("/llama.cpp/preview")
-async def preview_llama_cpp(payload: PreviewIn):
+@router.post("/{engine_name}/preview")
+async def preview_engine(engine_name: str, payload: PreviewIn):
+    try:
+        engine = get_engine(engine_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     node = {
         "listenHost": payload.listenHost,
         "listenPort": payload.listenPort,
         "modelDir": payload.modelDir,
         "serverParams": payload.serverParams.model_dump(),
+        "selectedModel": payload.modelFilename,
+        "modelFilename": payload.modelFilename,
+        "vllmImage": payload.vllmImage,
     }
     try:
-        argv = LlamaCppEngine.build_argv(node, payload.modelDir)
-        command = LlamaCppEngine.preview_command(node)
+        argv = engine.build_argv(node, payload.modelDir)
+        command = engine.preview_command(node)
     except ForbiddenExtraFlagsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:

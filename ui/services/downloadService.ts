@@ -48,4 +48,8 @@ export const downloadService = {
   retry(id: string): Promise<DownloadJob> {
     return api<DownloadJob>(`/downloads/${id}/retry`, { method: 'POST' });
   },
+
+  remove(id: string): Promise<void> {
+    return api<void>(`/downloads/${id}`, { method: 'DELETE' });
+  },
 };

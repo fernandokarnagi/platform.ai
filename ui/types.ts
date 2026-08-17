@@ -1,4 +1,4 @@
-export type EngineType = 'llama.cpp';
+export type EngineType = 'llama.cpp' | 'vllm';
 
 export type SshAuthType = 'password' | 'private_key' | 'none';
 
@@ -46,6 +46,18 @@ export interface ServerParams {
   metrics?: boolean | null;
   alias?: string | null;
   extraFlags: string;
+  tensorParallelSize?: number;
+  gpuMemoryUtilization?: number;
+  maxModelLen?: number | null;
+  dtype?: string | null;
+  quantization?: string | null;
+  maxNumSeqs?: number | null;
+  swapSpace?: number | null;
+  kvCacheDtype?: string | null;
+  servedModelName?: string | null;
+  trustRemoteCode?: boolean | null;
+  enforceEager?: boolean | null;
+  enablePrefixCaching?: boolean | null;
 }
 
 export interface Cluster {
@@ -81,6 +93,7 @@ export interface LastStart {
 export interface Node {
   id: string;
   clusterId: string;
+  engine?: EngineType | string;
   name: string;
   nodeType: NodeType;
   host: string;
@@ -97,6 +110,7 @@ export interface Node {
   listenPort: number;
   modelDir: string;
   llamaServerPath: string;
+  vllmImage?: string;
   selectedModel?: string;
   serverParams: ServerParams;
   lastStart: LastStart | null;
@@ -148,6 +162,7 @@ export interface NodeIn {
   listenPort?: number;
   modelDir?: string;
   llamaServerPath?: string;
+  vllmImage?: string;
   selectedModel?: string;
   serverParams?: ServerParams;
 }
@@ -169,6 +184,7 @@ export interface NodeUpdate {
   listenPort?: number;
   modelDir?: string;
   llamaServerPath?: string;
+  vllmImage?: string;
   selectedModel?: string;
   serverParams?: ServerParams;
 }
@@ -282,6 +298,7 @@ export interface PreviewIn {
   modelDir?: string;
   serverParams?: ServerParams;
   modelFilename?: string;
+  vllmImage?: string;
 }
 
 export interface PreviewOut {

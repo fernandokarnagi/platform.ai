@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class EngineType(str, Enum):
     LLAMA_CPP = "llama.cpp"
+    VLLM = "vllm"
 
 
 class SshAuthType(str, Enum):
@@ -69,6 +70,18 @@ class ServerParams(BaseModel):
     metrics: Optional[bool] = None
     alias: Optional[str] = None
     extraFlags: str = ""
+    tensorParallelSize: int = 1
+    gpuMemoryUtilization: float = 0.9
+    maxModelLen: Optional[int] = None
+    dtype: Optional[str] = None
+    quantization: Optional[str] = None
+    maxNumSeqs: Optional[int] = None
+    swapSpace: Optional[int] = None
+    kvCacheDtype: Optional[str] = None
+    servedModelName: Optional[str] = None
+    trustRemoteCode: Optional[bool] = None
+    enforceEager: Optional[bool] = None
+    enablePrefixCaching: Optional[bool] = None
 
 
 class ClusterIn(BaseModel):
@@ -103,6 +116,7 @@ class NodeIn(BaseModel):
     listenPort: int = 8080
     modelDir: str = "~/models"
     llamaServerPath: str = ""
+    vllmImage: str = ""
     selectedModel: str = ""
     serverParams: ServerParams = Field(default_factory=ServerParams)
 
@@ -125,6 +139,7 @@ class NodeUpdate(BaseModel):
     listenPort: Optional[int] = None
     modelDir: Optional[str] = None
     llamaServerPath: Optional[str] = None
+    vllmImage: Optional[str] = None
     selectedModel: Optional[str] = None
     serverParams: Optional[ServerParams] = None
 
@@ -168,3 +183,4 @@ class PreviewIn(BaseModel):
     modelDir: str = "~/models"
     serverParams: ServerParams = Field(default_factory=ServerParams)
     modelFilename: str = "$MODEL"
+    vllmImage: str = ""

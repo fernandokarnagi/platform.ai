@@ -66,6 +66,8 @@ async def update_cluster(cluster_id: str, update: ClusterUpdate):
         data["engine"] = data["engine"].value
     data["updatedAt"] = datetime.utcnow()
     await db.clusters.update_one({"_id": oid}, {"$set": data})
+    if "engine" in data:
+        await db.nodes.update_many({"clusterId": oid}, {"$set": {"engine": data["engine"]}})
     updated = await db.clusters.find_one({"_id": oid})
     return cluster_helper(updated, *await _node_stats(db, oid))
 
