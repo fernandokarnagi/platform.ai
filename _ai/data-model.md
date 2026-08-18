@@ -13,7 +13,7 @@ Database name: `platformai`. Test DB: `platformai_test`.
 | Field | Notes |
 |---|---|
 | `name` | required, unique |
-| `engine` | `llama.cpp` or `vllm` |
+| `engine` | `llama.cpp`, `vllm` (AMD ROCm Linux / Docker), or `vllm-metal` (Mac Metal / native) |
 | `description` | optional |
 | `createdAt` / `updatedAt` | |
 
@@ -33,8 +33,8 @@ Delete is **409** `Cluster has nodes` while any node remains.
 | `listenHost` / `listenPort` | default `0.0.0.0` / `8080` |
 | `modelDir` | default `~/models` |
 | `engine` | copied from the parent cluster on create |
-| `llamaServerPath` | optional full path to `llama-server`; empty = auto-detect |
-| `vllmImage` | ROCm Docker image for vLLM; empty = Instinct CDNA default |
+| `llamaServerPath` | optional full path to `llama-server` or the Metal `vllm` CLI; empty = auto-detect |
+| `vllmImage` | ROCm Docker image for `vllm`; unused on `vllm-metal`; empty = Instinct CDNA default |
 | `selectedModel` | required to start vLLM (local folder or `org/model`) |
 | `serverParams` | see [[llama-cpp-engine]] or [[vllm-engine]] |
 | `lastStart` | `{ modelFilename, argv, startedAt }` or null |

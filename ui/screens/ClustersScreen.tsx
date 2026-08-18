@@ -4,7 +4,9 @@ import ErrorBanner from '@components/ErrorBanner';
 import SuccessModal from '@components/SuccessModal';
 import { useClusters } from '@contexts/ClusterContext';
 import { clusterService } from '@services/clusterService';
+import { engineLabel } from '@/lib/engine';
 import { formatDateTime } from '@/lib/format';
+import type { EngineType } from '@/types';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -40,7 +42,7 @@ export default function ClustersScreen() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [engine, setEngine] = useState<'llama.cpp' | 'vllm'>('llama.cpp');
+  const [engine, setEngine] = useState<EngineType>('llama.cpp');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -84,7 +86,7 @@ export default function ClustersScreen() {
       <div className="page-head">
         <div>
           <h1>Clusters</h1>
-          <p className="page-sub">Inferencing clusters running llama.cpp or vLLM</p>
+          <p className="page-sub">Inferencing clusters running llama.cpp or vLLM (ROCm Linux or Mac Metal)</p>
         </div>
         <button type="button" onClick={openCreate} className="toggle accent">
           Create cluster
@@ -123,7 +125,7 @@ export default function ClustersScreen() {
               <tr key={cluster.id} className="clickable" onClick={() => navigate(`/clusters/${cluster.id}`)}>
                 <td>{cluster.name}</td>
                 <td>
-                  <span className="badge">{cluster.engine}</span>
+                  <span className="badge">{engineLabel(cluster.engine)}</span>
                 </td>
                 <td>
                   {cluster.nodeCount === 0 ? (
@@ -168,11 +170,12 @@ export default function ClustersScreen() {
               <span className="field-label">Engine</span>
               <select
                 value={engine}
-                onChange={(event) => setEngine(event.target.value as 'llama.cpp' | 'vllm')}
+                onChange={(event) => setEngine(event.target.value as EngineType)}
                 className="field-input"
               >
                 <option value="llama.cpp">llama.cpp</option>
-                <option value="vllm">vLLM</option>
+                <option value="vllm">vLLM AMD ROCm Linux</option>
+                <option value="vllm-metal">vLLM Mac Metal</option>
               </select>
             </label>
             <div className="modal-actions">

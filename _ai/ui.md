@@ -29,7 +29,7 @@ Command preview has **Copy**. Each form parameter has an **i** button that opens
 
 Node table: Access, Engine, OpenAI (healthy/down + last check time), Model. OpenAI and the old Status column are the same check. **Params** next to Engine (cluster table or node Status) opens a popup of launch parameter names and values.
 
-Create cluster picks **llama.cpp** or **vLLM**. The node form, setup steps, download dialog, and start path follow that engine.
+Create cluster picks **llama.cpp**, **vLLM AMD ROCm Linux** (`vllm`), or **vLLM Mac Metal** (`vllm-metal`). The node form, setup steps, download dialog, and start path follow that engine. Existing `vllm` clusters stay ROCm Docker.
 
 Cluster list **Nodes** is live `running / stopped`, not a bare count. Timestamps are SGT (`Asia/Singapore`), format `DD-MMM-YYYY HH:mm`. Naive API ISO strings are UTC.
 
@@ -37,7 +37,7 @@ Edit and delete live on the detail page only. Cluster list and the node table ha
 
 ## Node form
 
-Sections: Identity, SSH (or local note), OpenAI, Server (listen + model dir + optional binary path), Load, Advanced, Extra flags, Command preview, Setup (after save). vLLM uses a **Docker image** field and **Model to serve**. Preview is `docker run … vllm serve`.
+Sections: Identity, SSH (or local note), OpenAI, Server (listen + model dir + optional binary path), Load, Advanced, Extra flags, Command preview, Setup (after save). ROCm vLLM uses a **Docker image** field and **Model to serve**; preview is `docker run … vllm serve`. Mac Metal uses **vLLM path** (empty = `~/.venv-vllm-metal/bin/vllm`) and the same model field; preview is `vllm serve`.
 
 Advanced **Jinja** reveals a textarea for the chat template used on start (`--jinja` then `--chat-template`). Leave it empty to keep the model's built-in template. With Jinja off, Chat template is a single-line built-in name (`chatml`, `llama3`, …).
 

@@ -1,7 +1,8 @@
+import { isVllm, isVllmDocker, isVllmMetal } from '@/lib/engine';
 import type { Node, ServerParams } from '@/types';
 
 export type EngineParamsSource = Pick<Node, 'listenHost' | 'listenPort' | 'modelDir' | 'serverParams'> &
-  Partial<Pick<Node, 'engine' | 'selectedModel' | 'vllmImage'>>;
+  Partial<Pick<Node, 'engine' | 'selectedModel' | 'vllmImage' | 'llamaServerPath'>>;
 
 type Row = { label: string; value: string };
 
@@ -14,28 +15,32 @@ function display(value: string | number | boolean | null | undefined): string | 
 
 function rowsFor(node: EngineParamsSource): Row[] {
   const params: ServerParams = node.serverParams ?? ({} as ServerParams);
-  const vllm = node.engine === 'vllm';
-  const always: Array<[string, string | number | boolean | null | undefined]> = vllm
-    ? [
-        ['Listen host', node.listenHost],
-        ['Listen port', node.listenPort],
-        ['Model dir', node.modelDir],
-        ['Docker image', node.vllmImage],
-        ['Model', node.selectedModel],
-        ['Tensor parallel', params.tensorParallelSize ?? 1],
-        ['GPU memory util', params.gpuMemoryUtilization ?? 0.9],
-      ]
-    : [
-        ['Listen host', node.listenHost],
-        ['Listen port', node.listenPort],
-        ['Model dir', node.modelDir],
-        ['Context length', params.ctxSize],
-        ['GPU layers', params.gpuLayers],
-        ['Flash attention', params.flashAttn],
-        ['Parallel slots', params.parallel],
-        ['KV offload', params.kvOffload],
-        ['Fit in memory', params.fit],
-      ];
+  const vllm = isVllm(node.engine);
+  const always: Array<[string, string | number | boolean | null | undefined]> = [
+    ['Listen host', node.listenHost],
+    ['Listen port', node.listenPort],
+    ['Model dir', node.modelDir],
+  ];
+  if (vllm) {
+    if (isVllmDocker(node.engine)) always.push(['Docker image', node.vllmImage]);
+    if (isVllmMetal(node.engine)) {
+      always.push(['vLLM path', node.llamaServerPath || '~/.venv-vllm-metal/bin/vllm']);
+    }
+    always.push(
+      ['Model', node.selectedModel],
+      ['Tensor parallel', params.tensorParallelSize ?? 1],
+      ['GPU memory util', params.gpuMemoryUtilization ?? 0.9],
+    );
+  } else {
+    always.push(
+      ['Context length', params.ctxSize],
+      ['GPU layers', params.gpuLayers],
+      ['Flash attention', params.flashAttn],
+      ['Parallel slots', params.parallel],
+      ['KV offload', params.kvOffload],
+      ['Fit in memory', params.fit],
+    );
+  }
   const optional: Array<[string, string | number | boolean | null | undefined]> = vllm
     ? [
         ['Max model length', params.maxModelLen],
@@ -94,7 +99,7 @@ export default function EngineParamsModal({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
-          <span>{node.engine === 'vllm' ? 'vLLM parameters' : 'llama-server parameters'}</span>
+          <span>{isVllm(node.engine) ? 'vLLM parameters' : 'llama-server parameters'}</span>
           <button type="button" onClick={onClose} className="modal-x">
             ✕
           </button>

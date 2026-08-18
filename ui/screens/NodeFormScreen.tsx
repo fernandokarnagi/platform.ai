@@ -7,7 +7,7 @@ import ServerParamsFields from '@components/ServerParamsFields';
 import SetupInstructions from '@components/SetupInstructions';
 import VllmParamsFields from '@components/VllmParamsFields';
 import { useClusters } from '@contexts/ClusterContext';
-import { engineBinaryName, engineLabel, isVllm } from '@/lib/engine';
+import { engineBinaryName, engineLabel, isVllm, isVllmDocker, isVllmMetal, previewEnginePath } from '@/lib/engine';
 import { clusterService } from '@services/clusterService';
 import { nodeService } from '@services/nodeService';
 import type { Node, NodeIn, NodeType, ServerParams, SshAuthType, TestSshResult } from '@/types';
@@ -137,6 +137,8 @@ export default function NodeFormScreen() {
   const cluster = clusters.find((item) => item.id === (clusterId || loadedClusterId));
   const engine = cluster?.engine || nodeEngine || 'llama.cpp';
   const vllm = isVllm(engine);
+  const vllmDocker = isVllmDocker(engine);
+  const vllmMetal = isVllmMetal(engine);
 
   function applyNode(node: Node) {
     setLoadedClusterId(node.clusterId);
@@ -548,7 +550,7 @@ export default function NodeFormScreen() {
                 <input value={modelDir} onChange={(event) => setModelDir(event.target.value)} className={inputClass} />
               </Field>
             </div>
-            {vllm ? (
+            {vllmDocker ? (
               <div className="sm:col-span-2">
                 <Field
                   label="Docker image"
@@ -559,6 +561,20 @@ export default function NodeFormScreen() {
                     onChange={(event) => setVllmImage(event.target.value)}
                     className={inputClass}
                     placeholder="rocm/vllm:rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0"
+                  />
+                </Field>
+              </div>
+            ) : vllmMetal ? (
+              <div className="sm:col-span-2">
+                <Field
+                  label="vLLM path"
+                  info="Full path to the vllm CLI on this Mac. Leave empty to use ~/.venv-vllm-metal/bin/vllm, then PATH."
+                >
+                  <input
+                    value={llamaServerPath}
+                    onChange={(event) => setLlamaServerPath(event.target.value)}
+                    className={inputClass}
+                    placeholder="~/.venv-vllm-metal/bin/vllm"
                   />
                 </Field>
               </div>
@@ -603,6 +619,8 @@ export default function NodeFormScreen() {
             modelDir={modelDir}
             modelFilename={selectedModel || '$MODEL'}
             vllmImage={vllmImage}
+            engine={previewEnginePath(engine)}
+            llamaServerPath={llamaServerPath}
             onChange={setServerParams}
             onPreviewError={setPreviewError}
           />

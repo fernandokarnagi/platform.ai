@@ -13,3 +13,5 @@ def configure_logging(level: str = "INFO") -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
         stream=sys.stdout,
     )
+    # asyncssh INFO logs the full remote command, including HF_TOKEN.
+    logging.getLogger("asyncssh").setLevel(logging.WARNING)

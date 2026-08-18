@@ -6,6 +6,7 @@ import SuccessModal from '@components/SuccessModal';
 import ModelRadios from '@components/ModelRadios';
 import StatusIcon from '@components/StatusIcon';
 import { usefulDetail } from '@/lib/errors';
+import { engineLabel } from '@/lib/engine';
 import { useClusters } from '@contexts/ClusterContext';
 import { clusterService } from '@services/clusterService';
 import { nodeService } from '@services/nodeService';
@@ -239,7 +240,9 @@ export default function ClusterDetailScreen() {
           <div>
             <h1>{cluster?.name ?? 'Cluster'}</h1>
             <p className="page-sub">
-              {cluster ? `${cluster.engine}${cluster.description ? ` · ${cluster.description}` : ''}` : ' '}
+              {cluster
+                ? `${engineLabel(cluster.engine)}${cluster.description ? ` · ${cluster.description}` : ''}`
+                : ' '}
             </p>
           </div>
           <div className="page-actions">

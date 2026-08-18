@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class EngineType(str, Enum):
     LLAMA_CPP = "llama.cpp"
     VLLM = "vllm"
+    VLLM_METAL = "vllm-metal"
 
 
 class SshAuthType(str, Enum):
@@ -184,3 +185,4 @@ class PreviewIn(BaseModel):
     serverParams: ServerParams = Field(default_factory=ServerParams)
     modelFilename: str = "$MODEL"
     vllmImage: str = ""
+    llamaServerPath: str = ""

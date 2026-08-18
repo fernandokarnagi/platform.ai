@@ -15,6 +15,8 @@ class ForbiddenExtraFlagsError(ValueError):
 
 class LlamaCppEngine:
     NAME = "llama.cpp"
+    FAMILY = "llama.cpp"
+    PROCESS = "native"
     BINARY_LABEL = "llama-server"
     PID_FILE = "~/.platformai/llama-server.pid"
     LOG_FILE = "~/.platformai/llama-server.log"

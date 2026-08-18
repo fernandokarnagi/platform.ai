@@ -1,12 +1,12 @@
 ---
 title: Generated file map
 tags: [generated]
-updated: 2026-08-17
+updated: 2026-08-18
 ---
 
 # Generated file map
 
-Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
+Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
 
 - `AGENTS.md`
 - `CLAUDE.md`
@@ -30,6 +30,7 @@ Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 - `api/engines/base.py`
 - `api/engines/llama_cpp.py`
 - `api/engines/vllm.py`
+- `api/engines/vllm_metal.py`
 - `api/helpers.py`
 - `api/logger.py`
 - `api/main.py`
@@ -50,6 +51,7 @@ Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 - `api/tests/__init__.py`
 - `api/tests/conftest.py`
 - `api/tests/test_clusters.py`
+- `api/tests/test_download_progress.py`
 - `api/tests/test_engine_lifecycle.py`
 - `api/tests/test_health.py`
 - `api/tests/test_helpers.py`
@@ -60,6 +62,7 @@ Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
 - `api/tests/test_ssh.py`
 - `api/tests/test_status_cache.py`
 - `api/tests/test_vllm_argv.py`
+- `api/tests/test_vllm_metal_argv.py`
 - `docker-compose.yml`
 - `docs/superpowers/plans/2026-08-15-platformai-control-plane.md`
 - `docs/superpowers/specs/2026-08-15-platformai-control-plane-design.md`

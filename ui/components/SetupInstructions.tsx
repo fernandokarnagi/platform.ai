@@ -14,12 +14,40 @@ const VLLM_LINUX = `# AMD Instinct / ROCm (e.g. MI210 gfx90a). The API starts vL
 # Start/Stop in the UI run: docker rm -f platformai-vllm && docker run ... vllm serve
 # Do not run the CUDA pip vllm on this box.`;
 
+const VLLM_METAL = `# Apple Silicon only. Native vllm serve via vllm-metal (MLX). Not Docker.
+# 1. Native arm64 Python 3.12 — Rosetta / x86_64 Python is not supported
+# 2. Prefer git clone — raw.githubusercontent.com often returns HTTP 429:
+#    git clone --depth 1 https://github.com/vllm-project/vllm-metal.git ~/App/vllm-metal
+#    cd ~/App/vllm-metal && ./install.sh
+#    Venv: ~/App/vllm-metal/.venv-vllm-metal  (or ~/.venv-vllm-metal if you curl the script)
+#    If install.sh dies on xcodebuild / Metal toolchain, the Python plugin is
+#    already enough. Overlay the prebuilt wheel:
+#    source .venv-vllm-metal/bin/activate
+#    uv pip install https://github.com/vllm-project/vllm-metal/releases/download/v0.3.0.dev20260817081527/vllm_metal-0.3.0.dev20260817081527-cp312-cp312-macosx_11_0_arm64.whl
+# 3. Confirm: .venv-vllm-metal/bin/vllm --help   (must print "Platform plugin metal is activated")
+# 4. mkdir -p ~/models
+# Set vLLM path on the node to that bin/vllm. Download safetensors, not *-GGUF.`;
+
 export default function SetupInstructions({ engine = 'llama.cpp' }: { engine?: string }) {
-  const vllm = engine === 'vllm';
+  const vllmDocker = engine === 'vllm';
+  const vllmMetal = engine === 'vllm-metal';
   return (
     <section className="card space-y-4">
       <h2 className="card-title">Setup</h2>
-      {vllm ? (
+      {vllmMetal ? (
+        <>
+          <div>
+            <h3 className="field-label">macOS + Apple Silicon (Metal / MLX)</h3>
+            <pre className="setup-pre">{VLLM_METAL}</pre>
+          </div>
+          <div>
+            <h3 className="field-label">Linux</h3>
+            <p className="muted text-sm">
+              Use a <code className="inline">vLLM AMD ROCm Linux</code> cluster for Instinct / Radeon nodes.
+            </p>
+          </div>
+        </>
+      ) : vllmDocker ? (
         <>
           <div>
             <h3 className="field-label">Linux + AMD (ROCm / Docker)</h3>
@@ -28,7 +56,8 @@ export default function SetupInstructions({ engine = 'llama.cpp' }: { engine?: s
           <div>
             <h3 className="field-label">macOS</h3>
             <p className="muted text-sm">
-              vLLM is not started on a Mac. Register a Linux AMD node with Docker, or keep a llama.cpp cluster here.
+              This cluster is Docker + ROCm. For a Mac, create a <code className="inline">vLLM Mac Metal</code> cluster
+              instead.
             </p>
           </div>
         </>

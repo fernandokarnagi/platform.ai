@@ -1,7 +1,7 @@
 ---
 title: API
 tags: [api]
-updated: 2026-08-16
+updated: 2026-08-18
 ---
 
 # API
@@ -27,12 +27,12 @@ Locked HTTP: `201` create, `204` delete, `400` bad input, `404` missing, `409` c
 | GET | `/downloads` | list jobs from Mongo only. A watcher updates running jobs every 3s |
 | GET | `/downloads/{id}` | one job from Mongo |
 | POST | `/downloads/{id}/cancel` | kill curl on the node |
-| POST | `/downloads/{id}/retry` | restart a failed or cancelled job on the same node |
+| POST | `/downloads/{id}/retry` | restart a failed or cancelled job on the same node. vLLM retry kills the old `hf` but keeps `.partial` so the snapshot can resume |
 | DELETE | `/downloads/{id}` | remove the job from the list; cancels first if still running |
 | DELETE | `/nodes/{id}/models` | body `{ filename }` |
 | GET | `/nodes/{id}/models/openai` | proxy `/v1/models` |
 | POST | `/nodes/{id}/chat` | non-stream chat completions |
-| POST | `/engines/{engine}/preview` | argv + command string (`llama.cpp` or `vllm`) |
+| POST | `/engines/{engine}/preview` | argv + command string (`llama.cpp`, `vllm`, or `vllm-metal`) |
 
 Route table is regenerated in [[generated/api-map]].
 

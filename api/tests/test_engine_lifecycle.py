@@ -432,3 +432,98 @@ async def test_vllm_start_dies_reports_no_gpu(app, monkeypatch):
         response = await client.post(f"/nodes/{node['id']}/engine/start", json={})
         assert response.status_code == 502
         assert "0 GPUs" in response.json()["detail"]
+
+
+async def _seed_vllm_metal(client):
+    cluster = (await client.post("/clusters", json={"name": "mac-metal", "engine": "vllm-metal"})).json()
+    node = (
+        await client.post(
+            f"/clusters/{cluster['id']}/nodes",
+            json={
+                "name": "this-mac",
+                "nodeType": "local",
+                "openaiBaseUrl": "http://127.0.0.1:8000/v1",
+                "listenPort": 8000,
+                "selectedModel": "Qwen--Qwen2.5-7B-Instruct",
+            },
+        )
+    ).json()
+    return node
+
+
+@pytest.mark.asyncio
+async def test_create_vllm_metal_cluster_and_node(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        cluster = (await client.post("/clusters", json={"name": "mac-metal", "engine": "vllm-metal"})).json()
+        assert cluster["engine"] == "vllm-metal"
+        node = (
+            await client.post(
+                f"/clusters/{cluster['id']}/nodes",
+                json={
+                    "name": "this-mac",
+                    "nodeType": "local",
+                    "openaiBaseUrl": "http://127.0.0.1:8000/v1",
+                    "listenPort": 8000,
+                },
+            )
+        ).json()
+        assert node["engine"] == "vllm-metal"
+        assert node["listenPort"] == 8000
+
+
+@pytest.mark.asyncio
+async def test_vllm_metal_start_stop(app, monkeypatch):
+    state = {"running": False}
+
+    async def fake_run(node, command, timeout=30.0):
+        if _expand_ok(command):
+            return FakeResult("/Users/x/models\n")
+        if "nohup" in command:
+            assert "serve" in command
+            assert "Qwen--Qwen2.5-7B-Instruct" in command
+            assert "docker" not in command
+            state["running"] = True
+            return FakeResult("4242\n")
+        if ".venv-vllm-metal/bin/vllm" in command or "command -v vllm" in command:
+            return FakeResult("/Users/x/.venv-vllm-metal/bin/vllm\n")
+        if "vllm.pid" in command and "cat" in command and "kill" not in command:
+            return FakeResult("4242\n" if state["running"] else "")
+        if "echo alive" in command:
+            return FakeResult("alive\n" if state["running"] else "")
+        if "kill" in command:
+            state["running"] = False
+            return FakeResult("STOPPED\n")
+        return FakeResult("")
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_run)
+    monkeypatch.setattr("api.routes.nodes.asyncio.sleep", no_sleep)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed_vllm_metal(client)
+        started = await client.post(f"/nodes/{node['id']}/engine/start", json={})
+        assert started.status_code == 200
+        argv = " ".join(started.json()["lastStart"]["argv"])
+        assert argv.startswith("serve ")
+        assert started.json()["lastStart"]["modelFilename"] == "Qwen--Qwen2.5-7B-Instruct"
+        stopped = await client.post(f"/nodes/{node['id']}/engine/stop")
+        assert stopped.status_code == 200
+        assert stopped.json()["running"] is False
+
+
+@pytest.mark.asyncio
+async def test_vllm_metal_binary_not_found(app, monkeypatch):
+    async def fake_run(node, command, timeout=30.0):
+        if _expand_ok(command):
+            return FakeResult("/Users/x/models\n")
+        if ".venv-vllm-metal/bin/vllm" in command or "command -v vllm" in command:
+            return FakeResult("MISSING\n")
+        return FakeResult("")
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_run)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed_vllm_metal(client)
+        response = await client.post(f"/nodes/{node['id']}/engine/start", json={})
+        assert response.status_code == 502
+        assert "vllm not found" in response.json()["detail"]

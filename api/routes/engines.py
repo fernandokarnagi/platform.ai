@@ -19,6 +19,7 @@ async def preview_engine(engine_name: str, payload: PreviewIn):
         "selectedModel": payload.modelFilename,
         "modelFilename": payload.modelFilename,
         "vllmImage": payload.vllmImage,
+        "llamaServerPath": payload.llamaServerPath,
     }
     try:
         argv = engine.build_argv(node, payload.modelDir)

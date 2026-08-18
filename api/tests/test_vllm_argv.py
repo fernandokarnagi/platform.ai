@@ -111,7 +111,8 @@ def test_snapshot_download_prefers_hf_cli():
     assert "hf download" in cmd
     assert "huggingface-cli" not in cmd
     assert "huggingface_hub" in cmd
-    assert "setsid" in cmd
+    assert "command -v setsid" in cmd
+    assert "nohup" in cmd
 
 
 @pytest.mark.asyncio

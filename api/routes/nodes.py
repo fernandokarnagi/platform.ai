@@ -3,7 +3,12 @@ import asyncio
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
 from api.database import get_database
-from api.engines import ForbiddenExtraFlagsError, get_engine as resolve_engine
+from api.engines import (
+    ForbiddenExtraFlagsError,
+    get_engine as resolve_engine,
+    is_docker_vllm,
+    is_vllm_engine,
+)
 from api.helpers import (
     apply_node_location,
     download_helper,
@@ -156,6 +161,11 @@ async def test_ssh(node_id: str):
 
 def _vllm_crash_detail(log: str) -> str:
     text = log or ""
+    lower = text.lower()
+    if "mlx" in lower and ("out of memory" in lower or "oom" in lower):
+        return "vLLM Metal ran out of unified memory. Use a smaller model or lower max model length."
+    if "vllm_metal" in lower and ("not found" in lower or "no module" in lower or "importerror" in lower):
+        return "vLLM Metal plugin is missing. Run the vllm-metal install script on this Mac."
     if "0 devices" in text or "out of bounds for 0 devices" in text:
         return "vLLM sees 0 GPUs (no CUDA). Install the NVIDIA driver on the node so nvidia-smi works, then restart."
     if "libcuda.so.1" in text:
@@ -199,7 +209,7 @@ async def _expand_dir(node, engine):
 
 async def _resolve_binary(node, engine):
     label = getattr(engine, "BINARY_LABEL", "llama-server")
-    if getattr(engine, "NAME", "") == "vllm":
+    if is_docker_vllm(engine):
         result = await ssh_mod.run_command(node, engine.resolve_binary_command())
         binary = result.stdout.strip().splitlines()[0] if result.stdout.strip() else "MISSING"
         if binary == "MISSING":
@@ -215,7 +225,12 @@ async def _resolve_binary(node, engine):
     result = await ssh_mod.run_command(node, engine.resolve_binary_command())
     binary = result.stdout.strip().splitlines()[0] if result.stdout.strip() else "MISSING"
     if binary == "MISSING":
-        raise HTTPException(status_code=502, detail=f"{label} not found on node")
+        missing = (
+            "vllm not found on node. Install vllm-metal (~/.venv-vllm-metal) or set the vLLM path."
+            if is_vllm_engine(engine)
+            else f"{label} not found on node"
+        )
+        raise HTTPException(status_code=502, detail=missing)
     return binary
 
 
@@ -247,11 +262,11 @@ async def start_engine(node_id: str, payload: StartEngineIn):
         model_dir = await _expand_dir(node, engine)
         binary = await _resolve_binary(node, engine)
         selected = (payload.modelFilename or node.get("selectedModel") or "").strip()
-        if getattr(engine, "NAME", "") == "vllm" and not selected:
+        if is_vllm_engine(engine) and not selected:
             raise HTTPException(status_code=400, detail="Select a model before starting vLLM")
         start_node = {**node, "selectedModel": selected, "modelFilename": selected}
         argv = engine.build_argv(start_node, model_dir)
-        if getattr(engine, "NAME", "") == "vllm":
+        if is_docker_vllm(engine):
             started = await ssh_mod.run_command(
                 node, engine.start_command(binary, argv, start_node), timeout=180
             )
@@ -263,7 +278,7 @@ async def start_engine(node_id: str, payload: StartEngineIn):
         alive = await ssh_mod.run_command(node, engine.pid_alive_command(pid))
         if "alive" not in alive.stdout:
             raise HTTPException(status_code=502, detail="SSH failed: engine did not start")
-        if getattr(engine, "NAME", "") == "vllm":
+        if is_vllm_engine(engine):
             await _confirm_vllm_stayed_up(node, engine, pid)
         last_start = {"modelFilename": selected, "argv": argv, "startedAt": datetime.utcnow().isoformat()}
         started_fields = {"lastStart": last_start, "updatedAt": datetime.utcnow()}
@@ -409,7 +424,7 @@ async def list_hf_repo_files(node_id: str, repo: str = Query(...)):
     if not parsed["repo"] or "/" not in parsed["repo"]:
         raise HTTPException(status_code=400, detail="repo must look like org/model")
     token = node.get("hfToken") or ""
-    suffixes = None if getattr(engine, "NAME", "") == "vllm" else (".gguf",)
+    suffixes = None if is_vllm_engine(engine) else (".gguf",)
     files = await _list_hf_file_details(parsed["repo"], parsed["revision"], token, suffixes)
     if not files:
         detail = "No files found in that repo" if suffixes is None else "No GGUF files found in that repo"
@@ -437,7 +452,7 @@ async def download_model(node_id: str, payload: DownloadModelIn):
             parsed = engine.parse_hf_ref(payload.repo, payload.filename or "")
             if not parsed["repo"] or "/" not in parsed["repo"]:
                 raise HTTPException(status_code=400, detail="repo must look like org/model")
-            if getattr(engine, "NAME", "") == "vllm":
+            if is_vllm_engine(engine):
                 filename = safe_model_filename(engine.snapshot_dirname(parsed["repo"]))
                 url = parsed["repo"]
                 files = await _list_hf_file_details(parsed["repo"], parsed["revision"], token, None)
@@ -472,9 +487,9 @@ async def download_model(node_id: str, payload: DownloadModelIn):
                 parsed["repo"],
                 parsed["revision"],
                 token,
-                None if getattr(engine, "NAME", "") == "vllm" else (".gguf",),
+                None if is_vllm_engine(engine) else (".gguf",),
             )
-            if getattr(engine, "NAME", "") == "vllm":
+            if is_vllm_engine(engine):
                 total = sum(int(item.get("sizeBytes") or 0) for item in listed)
             else:
                 for item in listed:

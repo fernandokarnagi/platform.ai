@@ -7,6 +7,23 @@ from api.services import ssh as ssh_mod
 logger = get_logger(__name__)
 
 
+def parse_progress(stdout: str) -> tuple[str, str, int, str, str]:
+    """Parse engine progress stdout. Ignore tqdm \\r fragments."""
+    for raw in (stdout or "").replace("\r", "\n").split("\n"):
+        if "\t" not in raw:
+            continue
+        parts = raw.split("\t")
+        while len(parts) < 5:
+            parts.append("")
+        alive, exit_code, size_raw, done_flag, err = parts[:5]
+        try:
+            size = int(size_raw or 0)
+        except ValueError:
+            size = 0
+        return alive, exit_code, size, done_flag, err
+    return "0", "", 0, "0", ""
+
+
 async def sync_job(db, doc: dict) -> dict:
     """Probe a running download on the node and persist bytes/status."""
     if doc.get("status") not in ("queued", "running"):
@@ -33,15 +50,7 @@ async def sync_job(db, doc: dict) -> dict:
         )
         doc.update({"detail": f"progress check failed: {exc}", "updatedAt": now})
         return doc
-    line = (result.stdout or "").strip().splitlines()
-    parts = (line[-1] if line else "").split("\t")
-    while len(parts) < 5:
-        parts.append("")
-    alive, exit_code, size_raw, done_flag, err = parts[:5]
-    try:
-        size = int(size_raw or 0)
-    except ValueError:
-        size = 0
+    alive, exit_code, size, done_flag, err = parse_progress(result.stdout or "")
     update = {"bytes": size, "updatedAt": now, "detail": ""}
     if done_flag == "1" or (alive != "1" and exit_code.strip() == "0"):
         update.update({"status": "done", "finishedAt": now})

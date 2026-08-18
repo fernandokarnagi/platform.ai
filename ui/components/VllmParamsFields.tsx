@@ -60,6 +60,8 @@ export interface VllmParamsFieldsProps {
   modelDir: string;
   modelFilename?: string;
   vllmImage?: string;
+  engine?: string;
+  llamaServerPath?: string;
   onChange: (params: ServerParams) => void;
   onPreviewError: (message: string | null) => void;
 }
@@ -71,6 +73,8 @@ export default function VllmParamsFields({
   modelDir,
   modelFilename = '$MODEL',
   vllmImage = '',
+  engine = 'vllm',
+  llamaServerPath = '',
   onChange,
   onPreviewError,
 }: VllmParamsFieldsProps) {
@@ -91,8 +95,9 @@ export default function VllmParamsFields({
               serverParams: params,
               modelFilename: modelFilename || '$MODEL',
               vllmImage,
+              llamaServerPath,
             },
-            'vllm',
+            engine,
           );
           if (cancelled) return;
           setCommand(preview.command);
@@ -115,7 +120,7 @@ export default function VllmParamsFields({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [listenHost, listenPort, modelDir, modelFilename, vllmImage, params, onPreviewError]);
+  }, [listenHost, listenPort, modelDir, modelFilename, vllmImage, engine, llamaServerPath, params, onPreviewError]);
 
   function patch(partial: Partial<ServerParams>) {
     onChange({ ...params, ...partial });

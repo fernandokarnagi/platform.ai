@@ -1,4 +1,4 @@
-export type EngineType = 'llama.cpp' | 'vllm';
+export type EngineType = 'llama.cpp' | 'vllm' | 'vllm-metal';
 
 export type SshAuthType = 'password' | 'private_key' | 'none';
 
@@ -299,6 +299,7 @@ export interface PreviewIn {
   serverParams?: ServerParams;
   modelFilename?: string;
   vllmImage?: string;
+  llamaServerPath?: string;
 }
 
 export interface PreviewOut {

@@ -1,12 +1,12 @@
 ---
 title: Generated API map
 tags: [generated, api]
-updated: 2026-08-17
+updated: 2026-08-18
 ---
 
 # Generated API map
 
-Written by `scripts/update-brain.sh` on 2026-08-17. Do not edit.
+Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
 
 | Method | Path | File |
 |---|---|---|

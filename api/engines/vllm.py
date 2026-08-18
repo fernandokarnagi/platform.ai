@@ -42,6 +42,8 @@ def _quote_parts(parts: list[str]) -> str:
 
 class VllmEngine:
     NAME = "vllm"
+    FAMILY = "vllm"
+    PROCESS = "docker"
     BINARY_LABEL = "docker"
     CONTAINER = CONTAINER_NAME
     DEFAULT_IMAGE = DEFAULT_VLLM_IMAGE
@@ -237,18 +239,26 @@ class VllmEngine:
             )
             inner = (
                 f"export REPO={shlex.quote(url)}; export DEST={shlex.quote(part)}; "
-                f"rm -rf {shlex.quote(part)}; mkdir -p {shlex.quote(part)}; "
+                f"mkdir -p {shlex.quote(part)}; "
                 "if command -v hf >/dev/null 2>&1; then "
                 f"{token_env}hf download {shlex.quote(url)} --local-dir {shlex.quote(part)}; "
                 f"else {token_env}python3 -c {shlex.quote(py)}; fi; "
                 f"ec=$?; echo $ec > {job_dir}/exit; "
                 f"if [ \"$ec\" -eq 0 ]; then rm -rf {shlex.quote(dest)}; mv {shlex.quote(part)} {shlex.quote(dest)}; fi"
             )
+        wrap = f"echo $$ > {job_dir}/pid; {inner}"
         return (
             f"mkdir -p {shlex.quote(model_dir)} {job_dir}; "
             f"rm -f {job_dir}/exit {job_dir}/pid {job_dir}/curl.log; "
-            f"setsid nohup /bin/bash -c {shlex.quote(inner)} "
-            f"< /dev/null > {job_dir}/curl.log 2>&1 & echo $! | tee {job_dir}/pid"
+            "if command -v setsid >/dev/null 2>&1; then "
+            f"setsid -f nohup /bin/bash -c {shlex.quote(wrap)} "
+            f"< /dev/null > {job_dir}/curl.log 2>&1; "
+            "else "
+            f"nohup /bin/bash -c {shlex.quote(wrap)} "
+            f"< /dev/null > {job_dir}/curl.log 2>&1 & "
+            "fi; "
+            f"i=0; while [ ! -s {job_dir}/pid ] && [ \"$i\" -lt 20 ]; do sleep 0.1; i=$((i+1)); done; "
+            f"cat {job_dir}/pid"
         )
 
     @staticmethod
@@ -271,22 +281,24 @@ class VllmEngine:
             f"size=$(du -sk {part_q} 2>/dev/null | awk '{{print $1 * 1024}}'); "
             f"if [ \"$alive\" != 1 ] && [ -z \"$ex\" ] && "
             f"find {part_q} {job_dir}/curl.log -mmin -2 2>/dev/null | grep -q .; then alive=1; fi; fi; "
-            f"err=''; [ -f {job_dir}/curl.log ] && err=$(tail -n 20 {job_dir}/curl.log | "
-            "sed $'s/\\x1b\\[[0-9;]*[A-Za-z]//g' | grep -v '^[[:space:]]*$' | tail -n 3 | tr '\\n' ' '); "
+            f"err=''; [ -f {job_dir}/curl.log ] && err=$(tr '\\r' '\\n' < {job_dir}/curl.log | "
+            "sed $'s/\\x1b\\[[0-9;]*[A-Za-z]//g' | grep -v '^[[:space:]]*$' | "
+            "grep -viE 'Fetching |%\\|' | tail -n 3 | tr '\\n' ' '); "
             "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$alive\" \"$ex\" \"${size:-0}\" \"$done\" \"$err\""
         )
 
     @staticmethod
-    def cancel_download_command(model_dir: str, filename: str, job_id: str) -> str:
+    def cancel_download_command(model_dir: str, filename: str, job_id: str, wipe: bool = True) -> str:
         dest = f"{model_dir.rstrip('/')}/{filename}"
         part = f"{dest}.partial"
         job_dir = VllmEngine._job_dir(job_id)
+        wipe_cmd = f"rm -rf {shlex.quote(part)}; " if wipe else ""
         return (
             f"if [ -f {job_dir}/pid ]; then "
             f"pid=$(cat {job_dir}/pid); "
             "kill \"$pid\" 2>/dev/null; sleep 0.2; kill -9 \"$pid\" 2>/dev/null; fi; "
             f"pkill -f {shlex.quote('hf download ' + filename.replace('--', '/'))} 2>/dev/null; "
-            f"rm -rf {shlex.quote(part)}; echo CANCELLED"
+            f"{wipe_cmd}echo CANCELLED"
         )
 
     @staticmethod

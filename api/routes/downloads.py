@@ -1,7 +1,7 @@
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from api.database import get_database
-from api.engines import get_engine
+from api.engines import get_engine, is_vllm_engine
 from api.helpers import download_helper, parse_object_id
 from api.services import ssh as ssh_mod
 
@@ -70,6 +70,17 @@ async def retry_download(job_id: str):
         )
         raise HTTPException(status_code=502, detail="Node is gone")
     token = (node.get("hfToken") or "") if doc.get("source") == "huggingface" else ""
+    engine = get_engine(node.get("engine") or doc.get("engine"))
+    if is_vllm_engine(engine):
+        try:
+            await ssh_mod.run_command(
+                node,
+                engine.cancel_download_command(
+                    doc["modelDir"], doc["filename"], str(doc["_id"]), wipe=False
+                ),
+            )
+        except ssh_mod.SshError:
+            pass
     await db.downloads.update_one(
         {"_id": doc["_id"]},
         {"$set": {"status": "queued", "detail": "", "bytes": 0, "updatedAt": now, "finishedAt": None}},
@@ -77,7 +88,7 @@ async def retry_download(job_id: str):
     try:
         started = await ssh_mod.run_command(
             node,
-            get_engine(node.get("engine") or doc.get("engine")).start_download_command(
+            engine.start_download_command(
                 doc["modelDir"], doc["filename"], doc["url"], str(doc["_id"]), token
             ),
         )

@@ -17,7 +17,7 @@ updated: 2026-08-16
 
 - The browser never SSHs and never calls a node OpenAI URL.
 - The API is the only component that holds SSH secrets and talks to nodes.
-- Engine-specific logic lives in `LlamaCppEngine` / `VllmEngine`. `get_engine(cluster.engine)` picks the class.
+- Engine-specific logic lives in `LlamaCppEngine` / `VllmEngine` / `VllmMetalEngine`. `get_engine(cluster.engine)` picks the class (`llama.cpp`, `vllm`, or `vllm-metal`).
 - Mongo is the only Docker service in v1. API and UI run on the host so SSH to LAN Macs is straightforward.
 
 ## Processes

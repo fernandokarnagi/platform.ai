@@ -31,6 +31,14 @@ async def test_create_vllm_cluster(app):
 
 
 @pytest.mark.asyncio
+async def test_create_vllm_metal_cluster(app):
+    async with await _client(app) as client:
+        created = await client.post("/clusters", json={"name": "mac-metal", "engine": "vllm-metal"})
+        assert created.status_code == 201
+        assert created.json()["engine"] == "vllm-metal"
+
+
+@pytest.mark.asyncio
 async def test_list_cluster_reports_stopped_nodes(app):
     async with await _client(app) as client:
         created = await client.post("/clusters", json={"name": "desk-macs"})
