@@ -82,6 +82,8 @@ Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
 - `ui/contexts/ClusterContext.tsx`
 - `ui/index.css`
 - `ui/index.tsx`
+- `ui/lib/chatModel.test.ts`
+- `ui/lib/chatModel.ts`
 - `ui/lib/engine.ts`
 - `ui/lib/errors.ts`
 - `ui/lib/format.ts`

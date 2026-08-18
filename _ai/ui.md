@@ -1,7 +1,7 @@
 ---
 title: UI
 tags: [ui]
-updated: 2026-08-17
+updated: 2026-08-18
 ---
 
 # UI
@@ -34,6 +34,8 @@ Create cluster picks **llama.cpp**, **vLLM AMD ROCm Linux** (`vllm`), or **vLLM 
 Cluster list **Nodes** is live `running / stopped`, not a bare count. Timestamps are SGT (`Asia/Singapore`), format `DD-MMM-YYYY HH:mm`. Naive API ISO strings are UTC.
 
 Edit and delete live on the detail page only. Cluster list and the node table have no action buttons. Cluster delete with nodes asks first, then `DELETE /clusters/{id}?cascade=true`.
+
+vLLM **Serve** writes `selectedModel`, points Chat at that snapshot, then starts the engine (or restarts it if it is already up). Confirm before a restart — it unloads the current model. **serving** means the live OpenAI list contains that snapshot; while it is still coming up the row says **selected** and Chat asks you to wait.
 
 ## Node form
 

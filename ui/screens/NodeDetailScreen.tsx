@@ -6,6 +6,7 @@ import ModelRadios from '@components/ModelRadios';
 import StatusIcon from '@components/StatusIcon';
 import { useClusters } from '@contexts/ClusterContext';
 import { usefulDetail } from '@/lib/errors';
+import { chatModelOptions, isModelServed, pickChatModel } from '@/lib/chatModel';
 import { engineBinaryName, isVllm } from '@/lib/engine';
 import { formatDateTime, formatFileTime } from '@/lib/format';
 import { nodeService } from '@services/nodeService';
@@ -136,7 +137,7 @@ export default function NodeDetailScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const [busy, setBusy] = useState<
-    'start' | 'stop' | 'restart' | 'download' | 'delete' | 'delete-node' | 'chat' | null
+    'start' | 'stop' | 'restart' | 'serve' | 'download' | 'delete' | 'delete-node' | 'chat' | null
   >(null);
   const [checking, setChecking] = useState<StatusCheck | null>(null);
   const [paramsOpen, setParamsOpen] = useState(false);
@@ -169,13 +170,14 @@ export default function NodeDetailScreen() {
   const [repetitionPenalty, setRepetitionPenalty] = useState('1.0');
   const [maxTokens, setMaxTokens] = useState('');
 
+  const selectedModelRef = useRef('');
+  selectedModelRef.current = node?.selectedModel || '';
+
   const applyStatus = useCallback((next: NodeStatus, preferred?: string) => {
     setStatus(next);
-    setChatModel((current) => {
-      if (current && next.models.includes(current)) return current;
-      if (preferred && next.models.includes(preferred)) return preferred;
-      return next.models[0] ?? '';
-    });
+    setChatModel((current) =>
+      pickChatModel(next.models, current, preferred ?? selectedModelRef.current),
+    );
   }, []);
 
   const applyNodeCaches = useCallback(
@@ -519,11 +521,28 @@ export default function NodeDetailScreen() {
 
   async function handleSelectModel(name: string) {
     if (!id || !node) return;
+    const running = Boolean(engine?.running);
+    if (running) {
+      const ok = window.confirm(`Serve ${name}? This restarts the engine and unloads the current model.`);
+      if (!ok) return;
+    }
     setError(null);
+    setBusy('serve');
     try {
-      setNode(await nodeService.update(id, { selectedModel: name }));
+      const updated = await nodeService.update(id, { selectedModel: name });
+      setNode(updated);
+      setChatModel((current) => pickChatModel(status?.models ?? [], current, name));
+      if (running) {
+        setEngine(await nodeService.restart(id));
+      } else {
+        setEngine(await nodeService.start(id, name));
+      }
+      await refreshAfterEngine(true);
+      await fetchLogs();
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -634,6 +653,7 @@ export default function NodeDetailScreen() {
   const vllm = isVllm(node?.engine);
   const backTo = node ? `/clusters/${node.clusterId}` : '/';
   const served = status?.models ?? [];
+  const chatOptions = chatModelOptions(served, node?.selectedModel);
   const visibleMessages = [...messages].reverse();
 
   return (
@@ -716,10 +736,10 @@ export default function NodeDetailScreen() {
                     value={chatModel}
                     onChange={(event) => setChatModel(event.target.value)}
                     className={inputClass}
-                    disabled={served.length === 0}
+                    disabled={chatOptions.length === 0}
                   >
-                    {served.length === 0 ? <option value="">No served models</option> : null}
-                    {served.map((modelId) => (
+                    {chatOptions.length === 0 ? <option value="">No served models</option> : null}
+                    {chatOptions.map((modelId) => (
                       <option key={modelId} value={modelId}>
                         {modelId}
                       </option>
@@ -784,6 +804,11 @@ export default function NodeDetailScreen() {
                   />
                 </label>
               </div>
+              {vllm && node?.selectedModel && !isModelServed(served, node.selectedModel) ? (
+                <p className="muted">
+                  {node.selectedModel} is selected. Waiting for the engine to serve it.
+                </p>
+              ) : null}
               <div className="chat-input">
                 <textarea
                   value={draft}
@@ -992,13 +1017,14 @@ export default function NodeDetailScreen() {
                 <ul className="model-list">
                   {models.map((model) => {
                     const selected = node?.selectedModel === model.name;
+                    const live = isModelServed(served, model.name);
                     return (
                       <li key={model.name} className="model-row">
                         <div className="model-meta">
                           <div className="model-name">{model.name}</div>
                           <div className="muted">
                             {formatBytes(model.sizeBytes)} · {formatFileTime(model.mtime)}
-                            {selected ? ' · serving' : ''}
+                            {live ? ' · serving' : selected ? ' · selected' : ''}
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -1009,7 +1035,7 @@ export default function NodeDetailScreen() {
                               className={selected ? 'toggle accent' : 'toggle'}
                               onClick={() => void handleSelectModel(model.name)}
                             >
-                              {selected ? 'Selected' : 'Serve'}
+                              {busy === 'serve' && selected ? 'Serving…' : selected ? 'Selected' : 'Serve'}
                             </button>
                           ) : null}
                           <button
