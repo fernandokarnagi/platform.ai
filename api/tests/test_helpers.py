@@ -3,14 +3,22 @@ from bson import ObjectId
 import pytest
 from fastapi import HTTPException
 from api.helpers import (
+    DEFAULT_LIBRARY_DIR,
     apply_node_location,
     cluster_helper,
     is_local_host,
     is_local_node,
     node_helper,
     parse_object_id,
+    resolve_hf_token,
+    resolve_library_dir,
     safe_model_filename,
+    settings_helper,
     default_server_params,
+    merge_llama_cpp_params,
+    merge_vllm_params,
+    apply_llama_cpp_settings,
+    apply_vllm_settings,
 )
 
 
@@ -76,6 +84,98 @@ def test_cluster_helper_serialises_id_and_dates():
     assert out["runningCount"] == 0
     assert out["stoppedCount"] == 2
     assert out["createdAt"].startswith("2026-08-15")
+    assert out["hfToken"] == ""
+
+
+def test_cluster_helper_includes_hf_token():
+    oid = ObjectId()
+    out = cluster_helper({"_id": oid, "name": "desk-macs", "hfToken": "hf_cluster", "createdAt": None, "updatedAt": None})
+    assert out["hfToken"] == "hf_cluster"
+
+
+def test_resolve_hf_token_order():
+    node = {"hfToken": "hf_node"}
+    cluster = {"hfToken": "hf_cluster"}
+    settings = {"hfToken": "hf_settings"}
+    assert resolve_hf_token(node, cluster, "hf_payload", settings) == "hf_payload"
+    assert resolve_hf_token(node, cluster, "", settings) == "hf_node"
+    assert resolve_hf_token({"hfToken": ""}, cluster, None, settings) == "hf_cluster"
+    assert resolve_hf_token({}, {}, None, settings) == "hf_settings"
+    assert resolve_hf_token({}, {}, None, {}) == ""
+
+
+def test_settings_helper_defaults():
+    out = settings_helper(None)
+    assert out["hfToken"] == ""
+    assert out["libraryDir"] == DEFAULT_LIBRARY_DIR
+    assert out["updatedAt"] == ""
+    assert out["llamaCpp"]["ctxSize"] is None
+    assert out["llamaCpp"]["extraFlags"] == ""
+    assert out["vllm"]["tensorParallelSize"] is None
+    assert out["vllm"]["extraFlags"] == ""
+    stamped = settings_helper({"hfToken": "hf_settings", "updatedAt": datetime(2026, 8, 22, 12, 0, 0)})
+    assert stamped["hfToken"] == "hf_settings"
+    assert stamped["libraryDir"] == DEFAULT_LIBRARY_DIR
+    assert stamped["updatedAt"].startswith("2026-08-22")
+
+
+def test_resolve_library_dir_expands_and_defaults():
+    assert resolve_library_dir(None) == DEFAULT_LIBRARY_DIR
+    assert resolve_library_dir({}) == DEFAULT_LIBRARY_DIR
+    assert resolve_library_dir({"libraryDir": "  "}) == DEFAULT_LIBRARY_DIR
+    assert resolve_library_dir({"libraryDir": "/tmp/models-lib"}) == "/tmp/models-lib"
+
+
+def test_merge_llama_cpp_params_order():
+    merged = merge_llama_cpp_params(
+        {"ctxSize": None, "gpuLayers": "all", "extraFlags": ""},
+        {"ctxSize": 8192, "gpuLayers": "auto", "threads": 8, "extraFlags": "--verbose"},
+    )
+    assert merged["ctxSize"] == 8192
+    assert merged["gpuLayers"] == "all"
+    assert merged["threads"] == 8
+    assert merged["extraFlags"] == "--verbose"
+    assert merged["parallel"] == 1
+    node_wins = merge_llama_cpp_params({"ctxSize": 0, "threads": 4}, {"ctxSize": 8192, "threads": 8})
+    assert node_wins["ctxSize"] == 0
+    assert node_wins["threads"] == 4
+
+
+def test_apply_llama_cpp_settings_skips_vllm():
+    node = {"engine": "vllm", "serverParams": {"ctxSize": None}}
+    out = apply_llama_cpp_settings(node, {"llamaCpp": {"ctxSize": 8192}})
+    assert out is node
+    llama = apply_llama_cpp_settings(
+        {"engine": "llama.cpp", "serverParams": {}},
+        {"llamaCpp": {"ctxSize": 4096}},
+    )
+    assert llama["serverParams"]["ctxSize"] == 4096
+
+
+def test_merge_vllm_params_order():
+    merged = merge_vllm_params(
+        {"tensorParallelSize": None, "gpuMemoryUtilization": 0.7, "extraFlags": ""},
+        {"tensorParallelSize": 2, "gpuMemoryUtilization": 0.9, "maxModelLen": 32768, "extraFlags": "--dtype auto"},
+    )
+    assert merged["tensorParallelSize"] == 2
+    assert merged["gpuMemoryUtilization"] == 0.7
+    assert merged["maxModelLen"] == 32768
+    assert merged["extraFlags"] == "--dtype auto"
+    node_wins = merge_vllm_params({"tensorParallelSize": 1}, {"tensorParallelSize": 4, "maxModelLen": 8192})
+    assert node_wins["tensorParallelSize"] == 1
+    assert node_wins["maxModelLen"] == 8192
+
+
+def test_apply_vllm_settings_skips_llama():
+    node = {"engine": "llama.cpp", "serverParams": {"tensorParallelSize": None}}
+    assert apply_vllm_settings(node, {"vllm": {"tensorParallelSize": 2}}) is node
+    vllm = apply_vllm_settings(
+        {"engine": "vllm-metal", "serverParams": {}},
+        {"vllm": {"gpuMemoryUtilization": 0.6, "maxModelLen": 16384}},
+    )
+    assert vllm["serverParams"]["gpuMemoryUtilization"] == 0.6
+    assert vllm["serverParams"]["maxModelLen"] == 16384
+    assert vllm["serverParams"]["tensorParallelSize"] == 1
 
 
 def test_node_helper_includes_ssh_secrets():

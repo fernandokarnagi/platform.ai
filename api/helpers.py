@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from bson import ObjectId
 from fastapi import HTTPException, status
@@ -57,6 +58,183 @@ def default_server_params() -> dict:
     return ServerParams().model_dump()
 
 
+LLAMA_CPP_PARAM_KEYS = (
+    "ctxSize",
+    "gpuLayers",
+    "flashAttn",
+    "threads",
+    "parallel",
+    "batchSize",
+    "ubatchSize",
+    "kvOffload",
+    "fit",
+    "cacheTypeK",
+    "cacheTypeV",
+    "nPredict",
+    "keep",
+    "threadsBatch",
+    "splitMode",
+    "mainGpu",
+    "tensorSplit",
+    "device",
+    "cpuMoe",
+    "nCpuMoe",
+    "loadMode",
+    "jinja",
+    "chatTemplate",
+    "metrics",
+    "alias",
+    "extraFlags",
+)
+
+
+def llama_cpp_engine_defaults() -> dict:
+    return {
+        "ctxSize": 0,
+        "gpuLayers": "auto",
+        "flashAttn": "auto",
+        "threads": None,
+        "parallel": 1,
+        "batchSize": None,
+        "ubatchSize": None,
+        "kvOffload": True,
+        "fit": "on",
+        "cacheTypeK": None,
+        "cacheTypeV": None,
+        "nPredict": None,
+        "keep": None,
+        "threadsBatch": None,
+        "splitMode": None,
+        "mainGpu": None,
+        "tensorSplit": None,
+        "device": None,
+        "cpuMoe": None,
+        "nCpuMoe": None,
+        "loadMode": None,
+        "jinja": None,
+        "chatTemplate": None,
+        "metrics": None,
+        "alias": None,
+        "extraFlags": "",
+    }
+
+
+def param_is_set(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str) and value.strip() == "":
+        return False
+    return True
+
+
+def merge_llama_cpp_params(node_params: dict | None = None, settings_params: dict | None = None) -> dict:
+    """Engine defaults, then Settings, then node. Empty/None node fields inherit."""
+    merged = llama_cpp_engine_defaults()
+    node = node_params or {}
+    settings = settings_params or {}
+    for key in LLAMA_CPP_PARAM_KEYS:
+        if param_is_set(settings.get(key)):
+            merged[key] = settings.get(key)
+        if param_is_set(node.get(key)):
+            merged[key] = node.get(key)
+    out = dict(node)
+    out.update(merged)
+    return out
+
+
+def apply_llama_cpp_settings(node: dict, settings: dict | None = None) -> dict:
+    engine = str(node.get("engine") or "llama.cpp").strip()
+    if engine in ("vllm", "vllm-metal"):
+        return node
+    params = merge_llama_cpp_params(node.get("serverParams"), (settings or {}).get("llamaCpp"))
+    return {**node, "serverParams": params}
+
+
+def llama_cpp_settings_helper(raw) -> dict:
+    base = {key: None for key in LLAMA_CPP_PARAM_KEYS}
+    base["extraFlags"] = ""
+    if isinstance(raw, dict):
+        for key in LLAMA_CPP_PARAM_KEYS:
+            if key in raw:
+                base[key] = raw.get(key)
+    return base
+
+
+VLLM_PARAM_KEYS = (
+    "tensorParallelSize",
+    "gpuMemoryUtilization",
+    "maxModelLen",
+    "dtype",
+    "quantization",
+    "maxNumSeqs",
+    "swapSpace",
+    "kvCacheDtype",
+    "servedModelName",
+    "trustRemoteCode",
+    "enforceEager",
+    "enablePrefixCaching",
+    "extraFlags",
+)
+
+
+def vllm_engine_defaults() -> dict:
+    return {
+        "tensorParallelSize": 1,
+        "gpuMemoryUtilization": 0.9,
+        "maxModelLen": None,
+        "dtype": None,
+        "quantization": None,
+        "maxNumSeqs": None,
+        "swapSpace": None,
+        "kvCacheDtype": None,
+        "servedModelName": None,
+        "trustRemoteCode": None,
+        "enforceEager": None,
+        "enablePrefixCaching": None,
+        "extraFlags": "",
+    }
+
+
+def merge_vllm_params(node_params: dict | None = None, settings_params: dict | None = None) -> dict:
+    """Engine defaults, then Settings, then node. Empty/None node fields inherit."""
+    merged = vllm_engine_defaults()
+    node = node_params or {}
+    settings = settings_params or {}
+    for key in VLLM_PARAM_KEYS:
+        if param_is_set(settings.get(key)):
+            merged[key] = settings.get(key)
+        if param_is_set(node.get(key)):
+            merged[key] = node.get(key)
+    out = dict(node)
+    out.update(merged)
+    return out
+
+
+def apply_vllm_settings(node: dict, settings: dict | None = None) -> dict:
+    engine = str(node.get("engine") or "").strip()
+    if engine not in ("vllm", "vllm-metal"):
+        return node
+    params = merge_vllm_params(node.get("serverParams"), (settings or {}).get("vllm"))
+    return {**node, "serverParams": params}
+
+
+def apply_engine_settings(node: dict, settings: dict | None = None) -> dict:
+    engine = str(node.get("engine") or "llama.cpp").strip()
+    if engine in ("vllm", "vllm-metal"):
+        return apply_vllm_settings(node, settings)
+    return apply_llama_cpp_settings(node, settings)
+
+
+def vllm_settings_helper(raw) -> dict:
+    base = {key: None for key in VLLM_PARAM_KEYS}
+    base["extraFlags"] = ""
+    if isinstance(raw, dict):
+        for key in VLLM_PARAM_KEYS:
+            if key in raw:
+                base[key] = raw.get(key)
+    return base
+
+
 def cluster_helper(doc: dict, node_count: int = 0, running_count: int = 0) -> dict:
     stopped = max(int(node_count) - int(running_count), 0)
     return {
@@ -64,12 +242,52 @@ def cluster_helper(doc: dict, node_count: int = 0, running_count: int = 0) -> di
         "name": doc.get("name", ""),
         "engine": doc.get("engine", "llama.cpp"),
         "description": doc.get("description", ""),
+        "hfToken": doc.get("hfToken") or "",
         "nodeCount": node_count,
         "runningCount": running_count,
         "stoppedCount": stopped,
         "createdAt": _iso(doc.get("createdAt")),
         "updatedAt": _iso(doc.get("updatedAt")),
     }
+
+
+SETTINGS_DOC_ID = "app"
+DEFAULT_LIBRARY_DIR = "/Users/fernando.karnagi/App/globalmodel"
+
+
+def resolve_library_dir(settings: dict | None = None) -> str:
+    raw = str((settings or {}).get("libraryDir") or "").strip() or DEFAULT_LIBRARY_DIR
+    return os.path.abspath(os.path.expanduser(raw))
+
+
+def settings_helper(doc: dict | None = None) -> dict:
+    data = doc or {}
+    return {
+        "hfToken": data.get("hfToken") or "",
+        "libraryDir": resolve_library_dir(data),
+        "llamaCpp": llama_cpp_settings_helper(data.get("llamaCpp")),
+        "vllm": vllm_settings_helper(data.get("vllm")),
+        "updatedAt": _iso(data.get("updatedAt")),
+    }
+
+
+def resolve_hf_token(
+    node: dict | None = None,
+    cluster: dict | None = None,
+    override: str | None = None,
+    settings: dict | None = None,
+) -> str:
+    """Payload override, then node, then cluster, then Settings."""
+    for value in (
+        override,
+        (node or {}).get("hfToken"),
+        (cluster or {}).get("hfToken"),
+        (settings or {}).get("hfToken"),
+    ):
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
 
 
 def node_helper(doc: dict) -> dict:
@@ -190,6 +408,8 @@ def download_helper(doc: dict) -> dict:
         "repo": doc.get("repo") or "",
         "filename": doc.get("filename") or "",
         "url": doc.get("url") or "",
+        "kind": doc.get("kind") or "",
+        "target": doc.get("target") or ("library" if not node_id else "node"),
         "status": doc.get("status") or "queued",
         "bytes": int(doc.get("bytes") or 0),
         "totalBytes": int(doc.get("totalBytes") or 0),

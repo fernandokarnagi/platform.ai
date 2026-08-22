@@ -1,24 +1,31 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import EngineParamsModal from '@components/EngineParamsModal';
+import DryRunModal from '@components/DryRunModal';
+import RequestLogPanel from '@components/RequestLogPanel';
+import ServerMetricsPanel from '@components/ServerMetricsPanel';
 import ErrorBanner from '@components/ErrorBanner';
 import ModelRadios from '@components/ModelRadios';
 import StatusIcon from '@components/StatusIcon';
 import { useClusters } from '@contexts/ClusterContext';
 import { usefulDetail } from '@/lib/errors';
-import { chatModelOptions, isModelServed, pickChatModel } from '@/lib/chatModel';
+import { chatModelOptions, isModelServed, localServedModels, pickChatModel } from '@/lib/chatModel';
 import { engineBinaryName, isVllm } from '@/lib/engine';
 import { formatDateTime, formatFileTime } from '@/lib/format';
+import { libraryService } from '@services/libraryService';
 import { nodeService } from '@services/nodeService';
 import type {
   ChatIn,
   ChatMessage,
   DownloadModelIn,
+  LibraryModel,
+  DryRunResult,
   EngineStatus,
   HfRepoFile,
   Node,
   NodeStatus,
   RemoteModel,
+  RequestLogEntry,
   StatusCheck,
 } from '@/types';
 
@@ -124,6 +131,7 @@ function sleep(ms: number): Promise<void> {
 
 export default function NodeDetailScreen() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { refresh } = useClusters();
 
@@ -137,13 +145,27 @@ export default function NodeDetailScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const [busy, setBusy] = useState<
-    'start' | 'stop' | 'restart' | 'serve' | 'download' | 'delete' | 'delete-node' | 'chat' | null
+    | 'start'
+    | 'stop'
+    | 'restart'
+    | 'serve'
+    | 'download'
+    | 'delete'
+    | 'delete-node'
+    | 'chat'
+    | 'dry-run'
+    | null
   >(null);
+  const [dryRun, setDryRun] = useState<DryRunResult | null>(null);
+  const [requests, setRequests] = useState<RequestLogEntry[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
   const [checking, setChecking] = useState<StatusCheck | null>(null);
   const [paramsOpen, setParamsOpen] = useState(false);
 
   const [downloadOpen, setDownloadOpen] = useState(false);
-  const [downloadSource, setDownloadSource] = useState<'huggingface' | 'url'>('huggingface');
+  const [downloadSource, setDownloadSource] = useState<'library' | 'huggingface' | 'url'>('library');
+  const [libraryItems, setLibraryItems] = useState<LibraryModel[]>([]);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
   const [downloadRepo, setDownloadRepo] = useState('');
   const [downloadFilename, setDownloadFilename] = useState('');
   const [downloadUrl, setDownloadUrl] = useState('');
@@ -156,7 +178,7 @@ export default function NodeDetailScreen() {
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const [logText, setLogText] = useState('');
   const [logMissing, setLogMissing] = useState(false);
-  const [showLogs, setShowLogs] = useState(false);
+  const [showLogs, setShowLogs] = useState(() => searchParams.get('logs') === '1');
   const [logFollow, setLogFollow] = useState(true);
   const [logLoading, setLogLoading] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
@@ -170,42 +192,33 @@ export default function NodeDetailScreen() {
   const [repetitionPenalty, setRepetitionPenalty] = useState('1.0');
   const [maxTokens, setMaxTokens] = useState('');
 
-  const selectedModelRef = useRef('');
-  selectedModelRef.current = node?.selectedModel || '';
-
-  const applyStatus = useCallback((next: NodeStatus, preferred?: string) => {
+  const applyStatus = useCallback((next: NodeStatus) => {
     setStatus(next);
-    setChatModel((current) =>
-      pickChatModel(next.models, current, preferred ?? selectedModelRef.current),
-    );
   }, []);
 
   const applyNodeCaches = useCallback(
     (nodeData: Node) => {
+      if (nodeData.modelsCache) {
+        setModels(nodeData.modelsCache.items);
+        setModelsKnown(true);
+      }
       const cache = nodeData.statusCache;
       if (cache) {
-        applyStatus(
-          {
-            ssh: cache.ssh,
-            openai: cache.openai,
-            models: cache.models,
-            detail: cache.detail ?? null,
-            checkedAt: cache.checkedAt,
-            cached: true,
-            running: cache.running,
-            pid: cache.pid,
-          },
-          nodeData.selectedModel,
-        );
+        applyStatus({
+          ssh: cache.ssh,
+          openai: cache.openai,
+          models: cache.models,
+          detail: cache.detail ?? null,
+          checkedAt: cache.checkedAt,
+          cached: true,
+          running: cache.running,
+          pid: cache.pid,
+        });
         setEngine({
           running: cache.running,
           pid: cache.pid,
           lastStart: nodeData.lastStart,
         });
-      }
-      if (nodeData.modelsCache) {
-        setModels(nodeData.modelsCache.items);
-        setModelsKnown(true);
       }
     },
     [applyStatus],
@@ -255,6 +268,18 @@ export default function NodeDetailScreen() {
     [id, applyStatus],
   );
 
+  const fetchRequests = useCallback(async () => {
+    if (!id) return;
+    setRequestsLoading(true);
+    try {
+      setRequests(await nodeService.requests(id));
+    } catch {
+      setRequests([]);
+    } finally {
+      setRequestsLoading(false);
+    }
+  }, [id]);
+
   const load = useCallback(
     async (mode: 'full' | 'refresh' = 'full') => {
       if (!id) {
@@ -270,6 +295,7 @@ export default function NodeDetailScreen() {
         const nodeData = await nodeService.get(id);
         setNode(nodeData);
         applyNodeCaches(nodeData);
+        void fetchRequests();
         if (mode === 'full') {
           setLoading(false);
           const staleStatus = !nodeData.statusCache?.fresh;
@@ -287,7 +313,7 @@ export default function NodeDetailScreen() {
         setRefreshing(false);
       }
     },
-    [id, applyNodeCaches, hydrate],
+    [id, applyNodeCaches, hydrate, fetchRequests],
   );
 
   useEffect(() => {
@@ -362,6 +388,21 @@ export default function NodeDetailScreen() {
     setError(details.length ? details.join(' · ') : null);
   }
 
+  async function handleDryRun() {
+    if (!id) return;
+    const vllm = isVllm(node?.engine);
+    const model = node?.selectedModel || (vllm && models.length === 1 ? models[0].name : '');
+    setBusy('dry-run');
+    setError(null);
+    try {
+      setDryRun(await nodeService.dryRun(id, vllm ? model || undefined : undefined));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleStart() {
     if (!id) return;
     const vllm = isVllm(node?.engine);
@@ -414,12 +455,13 @@ export default function NodeDetailScreen() {
   }
 
   function openDownload() {
-    setDownloadSource('huggingface');
+    setDownloadSource('library');
     setDownloadRepo('');
     setDownloadFilename('');
     setDownloadUrl('');
     setHfFiles([]);
     setHfListError(null);
+    setLibraryError(null);
     setDownloadOpen(true);
     setError(null);
   }
@@ -467,9 +509,50 @@ export default function NodeDetailScreen() {
     };
   }, [downloadOpen, downloadSource, downloadRepo, id]);
 
+  useEffect(() => {
+    if (!downloadOpen || downloadSource !== 'library') return;
+    const kind = isVllm(node?.engine) ? 'vllm' : 'llama.cpp';
+    let cancelled = false;
+    void libraryService
+      .list(kind)
+      .then((listed) => {
+        if (cancelled) return;
+        setLibraryItems(listed.items);
+        setLibraryError(listed.items.length ? null : 'Library is empty. Fetch a model on Downloads first.');
+        setDownloadFilename((current) => {
+          if (current && listed.items.some((item) => item.name === current)) return current;
+          return listed.items[0]?.name ?? '';
+        });
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setLibraryItems([]);
+          setLibraryError(errorMessage(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [downloadOpen, downloadSource, node?.engine]);
+
   async function handleDownload(event: FormEvent) {
     event.preventDefault();
     if (!id) return;
+    if (downloadSource === 'library') {
+      if (!downloadFilename.trim()) {
+        setError('Pick a model from the library');
+        return;
+      }
+      setError(null);
+      try {
+        await nodeService.copyFromLibrary(id, isVllm(node?.engine) ? 'vllm' : 'llama.cpp', downloadFilename.trim());
+        setDownloadOpen(false);
+        navigate('/downloads');
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+      return;
+    }
     const payload: DownloadModelIn =
       downloadSource === 'huggingface'
         ? {
@@ -616,6 +699,7 @@ export default function NodeDetailScreen() {
       setError(errorMessage(err));
     } finally {
       setBusy(null);
+      void fetchRequests();
     }
   }
 
@@ -652,9 +736,22 @@ export default function NodeDetailScreen() {
   const running = Boolean(engine?.running);
   const vllm = isVllm(node?.engine);
   const backTo = node ? `/clusters/${node.clusterId}` : '/';
-  const served = status?.models ?? [];
-  const chatOptions = chatModelOptions(served, node?.selectedModel);
+  const served = useMemo(() => {
+    const live = status?.models ?? [];
+    if (vllm || !modelsKnown) return live;
+    return localServedModels(
+      live,
+      models.map((model) => model.name),
+    );
+  }, [vllm, modelsKnown, status?.models, models]);
+  const chatOptions = chatModelOptions(served, vllm ? node?.selectedModel : undefined);
   const visibleMessages = [...messages].reverse();
+
+  useEffect(() => {
+    setChatModel((current) =>
+      pickChatModel(served, current, vllm ? node?.selectedModel : undefined),
+    );
+  }, [served, vllm, node?.selectedModel]);
 
   return (
     <div className="page page-wide space-y-5">
@@ -714,6 +811,7 @@ export default function NodeDetailScreen() {
 
       {!loading ? (
         <div className={showLogs ? 'node-layout with-logs' : 'node-layout'}>
+          <div className="node-stack">
           <Section
             title="Chat"
             className="node-chat"
@@ -850,6 +948,10 @@ export default function NodeDetailScreen() {
               )}
             </div>
           </Section>
+          {id ? (
+            <RequestLogPanel rows={requests} loading={requestsLoading} onRefresh={() => void fetchRequests()} />
+          ) : null}
+          </div>
 
           {showLogs ? (
             <Section
@@ -870,6 +972,7 @@ export default function NodeDetailScreen() {
                 </div>
               }
             >
+              {id ? <ServerMetricsPanel nodeId={id} /> : null}
               {logMissing ? (
                 <p className="muted">
                   No log yet. Start the engine to create ~/.platformai/{vllm ? 'vllm.log' : 'llama-server.log'}.
@@ -887,6 +990,14 @@ export default function NodeDetailScreen() {
               title="Status"
               actions={
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleDryRun()}
+                    disabled={busy !== null}
+                    className="toggle"
+                  >
+                    {busy === 'dry-run' ? 'Checking…' : 'Dry run'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => void handleStart()}
@@ -1066,6 +1177,15 @@ export default function NodeDetailScreen() {
                 <input
                   type="radio"
                   name="download-source"
+                  checked={downloadSource === 'library'}
+                  onChange={() => setDownloadSource('library')}
+                />
+                Library
+              </label>
+              <label className="mr-4 inline-flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="download-source"
                   checked={downloadSource === 'huggingface'}
                   onChange={() => setDownloadSource('huggingface')}
                 />
@@ -1081,7 +1201,30 @@ export default function NodeDetailScreen() {
                 URL
               </label>
             </fieldset>
-            {downloadSource === 'huggingface' ? (
+            {downloadSource === 'library' ? (
+              <>
+                <label>
+                  <span className="field-label">Library model</span>
+                  {libraryItems.length ? (
+                    <select
+                      value={downloadFilename}
+                      onChange={(event) => setDownloadFilename(event.target.value)}
+                      className={inputClass}
+                    >
+                      {libraryItems.map((item) => (
+                        <option key={item.name} value={item.name}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="muted">{libraryError || 'No matching models in the library.'}</p>
+                  )}
+                </label>
+                {libraryError && libraryItems.length ? <p className="muted">{libraryError}</p> : null}
+                <p className="muted">Copies from the Settings library path into this node’s model dir.</p>
+              </>
+            ) : downloadSource === 'huggingface' ? (
               <>
                 <label>
                   <span className="field-label">Repo</span>
@@ -1157,7 +1300,7 @@ export default function NodeDetailScreen() {
                 Cancel
               </button>
               <button type="submit" disabled={busy !== null} className="toggle accent">
-                {busy === 'download' ? 'Downloading…' : 'Download'}
+                {busy === 'download' ? 'Downloading…' : downloadSource === 'library' ? 'Copy' : 'Download'}
               </button>
             </div>
           </form>
@@ -1165,6 +1308,7 @@ export default function NodeDetailScreen() {
       ) : null}
 
       {paramsOpen && node ? <EngineParamsModal node={node} onClose={() => setParamsOpen(false)} /> : null}
+      {dryRun ? <DryRunModal result={dryRun} onClose={() => setDryRun(null)} /> : null}
     </div>
   );
 }

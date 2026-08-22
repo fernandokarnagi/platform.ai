@@ -23,8 +23,8 @@ async def test_register_list_get_node(app):
         assert node["sshPassword"] == "secret"
         assert node["listenPort"] == 8080
         assert node["llamaServerPath"] == ""
-        assert node["serverParams"]["ctxSize"] == 0
-        assert node["serverParams"]["gpuLayers"] == "auto"
+        assert node["serverParams"]["ctxSize"] is None
+        assert node["serverParams"]["gpuLayers"] is None
         listed = await client.get(f"/clusters/{cluster['id']}/nodes")
         assert len(listed.json()) == 1
         fetched = await client.get(f"/nodes/{node['id']}")

@@ -1,5 +1,19 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { MaybeCollapsible } from '@components/CollapsibleCard';
+import InheritPill from '@components/InheritPill';
 import InfoTip from '@components/InfoTip';
+import {
+  LLAMA_ADVANCED_KEYS,
+  LLAMA_ENGINE_DEFAULTS,
+  LLAMA_EXTRA_KEYS,
+  LLAMA_LOAD_KEYS,
+  clearParamKeys,
+  inheritPlaceholder,
+  inheritResolved,
+  sectionInheritLine,
+  sectionSetCount,
+  type InheritLayer,
+} from '@/lib/inherit';
 import { apiErrorStatus, nodeService } from '@services/nodeService';
 import type { CacheType, FitMode, FlashAttn, ServerParams } from '@/types';
 
@@ -41,12 +55,23 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function Field({ label, info, children }: { label: string; info?: string; children: ReactNode }) {
+function Field({
+  label,
+  info,
+  source,
+  children,
+}: {
+  label: string;
+  info?: string;
+  source?: InheritLayer;
+  children: ReactNode;
+}) {
   return (
     <div>
       <span className="field-label">
         {label}
         {info ? <InfoTip text={info} /> : null}
+        {source ? <InheritPill layer={source} /> : null}
       </span>
       {children}
     </div>
@@ -64,9 +89,16 @@ function parseRequiredInt(value: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function gpuMode(value: string | number): 'auto' | 'all' | 'number' {
+function gpuMode(value: string | number | null | undefined): 'inherit' | 'auto' | 'all' | 'number' {
+  if (value === null || value === undefined || value === '') return 'inherit';
   if (value === 'auto' || value === 'all') return value;
   return 'number';
+}
+
+function boolSelect(value: boolean | null | undefined): '' | 'on' | 'off' {
+  if (value === true) return 'on';
+  if (value === false) return 'off';
+  return '';
 }
 
 export interface ServerParamsFieldsProps {
@@ -76,6 +108,10 @@ export interface ServerParamsFieldsProps {
   modelDir: string;
   onChange: (params: ServerParams) => void;
   onPreviewError: (message: string | null) => void;
+  emptyLabel?: string;
+  inheritValues?: Partial<ServerParams> | null;
+  applySettings?: boolean;
+  collapsible?: boolean;
 }
 
 export default function ServerParamsFields({
@@ -85,6 +121,10 @@ export default function ServerParamsFields({
   modelDir,
   onChange,
   onPreviewError,
+  emptyLabel = 'Settings',
+  inheritValues = null,
+  applySettings = true,
+  collapsible = false,
 }: ServerParamsFieldsProps) {
   const [command, setCommand] = useState('');
   const [copied, setCopied] = useState(false);
@@ -100,6 +140,7 @@ export default function ServerParamsFields({
             listenPort,
             modelDir,
             serverParams: params,
+            applySettings,
           });
           if (cancelled) return;
           setCommand(preview.command);
@@ -122,37 +163,74 @@ export default function ServerParamsFields({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [listenHost, listenPort, modelDir, params, onPreviewError]);
+  }, [listenHost, listenPort, modelDir, params, onPreviewError, applySettings]);
 
   function patch(partial: Partial<ServerParams>) {
     onChange({ ...params, ...partial });
   }
 
   const mode = gpuMode(params.gpuLayers);
+  const resetLabel = emptyLabel === 'Settings' ? 'Reset to Settings' : 'Reset to engine';
+
+  function resolved(key: keyof ServerParams) {
+    return inheritResolved(params[key], inheritValues?.[key], LLAMA_ENGINE_DEFAULTS[key]);
+  }
+
+  function hint(key: keyof ServerParams): string {
+    return inheritPlaceholder(inheritResolved(null, inheritValues?.[key], LLAMA_ENGINE_DEFAULTS[key]));
+  }
+
+  function source(key: keyof ServerParams): InheritLayer {
+    return resolved(key).layer;
+  }
+
+  function resetAction(keys: readonly (keyof ServerParams)[]) {
+    const set = sectionSetCount(keys, params);
+    return (
+      <button
+        type="button"
+        className="toggle"
+        disabled={set === 0}
+        onClick={() => onChange(clearParamKeys(params, keys))}
+      >
+        {resetLabel}
+      </button>
+    );
+  }
 
   return (
     <>
-      <section className="card space-y-4">
-        <h2 className="card-title">Load parameters</h2>
+      <MaybeCollapsible
+        title="Load parameters"
+        collapsible={collapsible}
+        description={sectionInheritLine(LLAMA_LOAD_KEYS, params, inheritValues, LLAMA_ENGINE_DEFAULTS)}
+        actions={resetAction(LLAMA_LOAD_KEYS)}
+      >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Context length" info={INFO.ctxSize}>
+          <Field label="Context length" info={INFO.ctxSize} source={source('ctxSize')}>
             <input
               type="number"
-              value={params.ctxSize}
-              onChange={(event) => patch({ ctxSize: parseRequiredInt(event.target.value, 0) })}
+              value={params.ctxSize ?? ''}
+              onChange={(event) => patch({ ctxSize: parseOptionalInt(event.target.value) })}
               className={inputClass}
+              placeholder={hint('ctxSize')}
             />
           </Field>
           <div>
             <span className="field-label">
               GPU layers
               <InfoTip text={INFO.gpuLayers} />
+              <InheritPill layer={source('gpuLayers')} />
             </span>
             <div className="flex gap-2">
               <select
-                value={mode}
+                value={mode === 'inherit' ? '' : mode}
                 onChange={(event) => {
                   const next = event.target.value;
+                  if (!next) {
+                    patch({ gpuLayers: null });
+                    return;
+                  }
                   if (next === 'auto' || next === 'all') {
                     patch({ gpuLayers: next });
                     return;
@@ -161,6 +239,7 @@ export default function ServerParamsFields({
                 }}
                 className={inputClass}
               >
+                <option value="">{hint('gpuLayers')}</option>
                 <option value="auto">auto</option>
                 <option value="all">all</option>
                 <option value="number">number</option>
@@ -175,74 +254,82 @@ export default function ServerParamsFields({
               ) : null}
             </div>
           </div>
-          <Field label="Flash attention" info={INFO.flashAttn}>
+          <Field label="Flash attention" info={INFO.flashAttn} source={source('flashAttn')}>
             <select
-              value={params.flashAttn}
-              onChange={(event) => patch({ flashAttn: event.target.value as FlashAttn })}
+              value={params.flashAttn ?? ''}
+              onChange={(event) =>
+                patch({ flashAttn: event.target.value === '' ? null : (event.target.value as FlashAttn) })
+              }
               className={inputClass}
             >
+              <option value="">{hint('flashAttn')}</option>
               <option value="auto">auto</option>
               <option value="on">on</option>
               <option value="off">off</option>
             </select>
           </Field>
-          <Field label="CPU threads" info={INFO.threads}>
+          <Field label="CPU threads" info={INFO.threads} source={source('threads')}>
             <input
               type="number"
               value={params.threads ?? ''}
               onChange={(event) => patch({ threads: parseOptionalInt(event.target.value) })}
               className={inputClass}
-              placeholder="omit"
+              placeholder={hint('threads')}
             />
           </Field>
-          <Field label="Parallel slots" info={INFO.parallel}>
+          <Field label="Parallel slots" info={INFO.parallel} source={source('parallel')}>
             <input
               type="number"
-              value={params.parallel}
-              onChange={(event) => patch({ parallel: parseRequiredInt(event.target.value, 1) })}
+              value={params.parallel ?? ''}
+              onChange={(event) => patch({ parallel: parseOptionalInt(event.target.value) })}
               className={inputClass}
+              placeholder={hint('parallel')}
             />
           </Field>
-          <Field label="Batch size" info={INFO.batchSize}>
+          <Field label="Batch size" info={INFO.batchSize} source={source('batchSize')}>
             <input
               type="number"
               value={params.batchSize ?? ''}
               onChange={(event) => patch({ batchSize: parseOptionalInt(event.target.value) })}
               className={inputClass}
-              placeholder="omit"
+              placeholder={hint('batchSize')}
             />
           </Field>
-          <Field label="µbatch size" info={INFO.ubatchSize}>
+          <Field label="µbatch size" info={INFO.ubatchSize} source={source('ubatchSize')}>
             <input
               type="number"
               value={params.ubatchSize ?? ''}
               onChange={(event) => patch({ ubatchSize: parseOptionalInt(event.target.value) })}
               className={inputClass}
-              placeholder="omit"
+              placeholder={hint('ubatchSize')}
             />
           </Field>
-          <label className="flex items-end gap-2">
-            <input
-              type="checkbox"
-              checked={params.kvOffload}
-              onChange={(event) => patch({ kvOffload: event.target.checked })}
-            />
-            <span className="field-label" style={{ margin: 0 }}>
-              KV offload
-              <InfoTip text={INFO.kvOffload} />
-            </span>
-          </label>
-          <Field label="Fit in memory" info={INFO.fit}>
+          <Field label="KV offload" info={INFO.kvOffload} source={source('kvOffload')}>
             <select
-              value={params.fit}
-              onChange={(event) => patch({ fit: event.target.value as FitMode })}
+              value={boolSelect(params.kvOffload)}
+              onChange={(event) => {
+                const next = event.target.value;
+                patch({ kvOffload: next === '' ? null : next === 'on' });
+              }}
               className={inputClass}
             >
+              <option value="">{hint('kvOffload')}</option>
               <option value="on">on</option>
               <option value="off">off</option>
             </select>
           </Field>
-          <Field label="Cache type K" info={INFO.cacheTypeK}>
+          <Field label="Fit in memory" info={INFO.fit} source={source('fit')}>
+            <select
+              value={params.fit ?? ''}
+              onChange={(event) => patch({ fit: event.target.value === '' ? null : (event.target.value as FitMode) })}
+              className={inputClass}
+            >
+              <option value="">{hint('fit')}</option>
+              <option value="on">on</option>
+              <option value="off">off</option>
+            </select>
+          </Field>
+          <Field label="Cache type K" info={INFO.cacheTypeK} source={source('cacheTypeK')}>
             <select
               value={params.cacheTypeK ?? ''}
               onChange={(event) =>
@@ -250,7 +337,7 @@ export default function ServerParamsFields({
               }
               className={inputClass}
             >
-              <option value="">omit</option>
+              <option value="">{hint('cacheTypeK')}</option>
               {CACHE_TYPES.map((type) => (
                 <option key={type} value={type}>
                   {type}
@@ -258,7 +345,7 @@ export default function ServerParamsFields({
               ))}
             </select>
           </Field>
-          <Field label="Cache type V" info={INFO.cacheTypeV}>
+          <Field label="Cache type V" info={INFO.cacheTypeV} source={source('cacheTypeV')}>
             <select
               value={params.cacheTypeV ?? ''}
               onChange={(event) =>
@@ -266,7 +353,7 @@ export default function ServerParamsFields({
               }
               className={inputClass}
             >
-              <option value="">omit</option>
+              <option value="">{hint('cacheTypeV')}</option>
               {CACHE_TYPES.map((type) => (
                 <option key={type} value={type}>
                   {type}
@@ -275,178 +362,199 @@ export default function ServerParamsFields({
             </select>
           </Field>
         </div>
-      </section>
+      </MaybeCollapsible>
 
-      <section className="card">
-        <details>
-          <summary className="card-title cursor-pointer">Advanced</summary>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <Field label="Max predict" info={INFO.nPredict}>
+      <MaybeCollapsible
+        title="Advanced"
+        collapsible
+        defaultOpen={false}
+        className="card"
+        description={sectionInheritLine(LLAMA_ADVANCED_KEYS, params, inheritValues, LLAMA_ENGINE_DEFAULTS)}
+        actions={resetAction(LLAMA_ADVANCED_KEYS)}
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Max predict" info={INFO.nPredict} source={source('nPredict')}>
               <input
                 type="number"
                 value={params.nPredict ?? ''}
                 onChange={(event) => patch({ nPredict: parseOptionalInt(event.target.value) })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('nPredict')}
               />
             </Field>
-            <Field label="Keep tokens" info={INFO.keep}>
+            <Field label="Keep tokens" info={INFO.keep} source={source('keep')}>
               <input
                 type="number"
                 value={params.keep ?? ''}
                 onChange={(event) => patch({ keep: parseOptionalInt(event.target.value) })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('keep')}
               />
             </Field>
-            <Field label="Batch threads" info={INFO.threadsBatch}>
+            <Field label="Batch threads" info={INFO.threadsBatch} source={source('threadsBatch')}>
               <input
                 type="number"
                 value={params.threadsBatch ?? ''}
                 onChange={(event) => patch({ threadsBatch: parseOptionalInt(event.target.value) })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('threadsBatch')}
               />
             </Field>
-            <Field label="Split mode" info={INFO.splitMode}>
+            <Field label="Split mode" info={INFO.splitMode} source={source('splitMode')}>
               <input
                 value={params.splitMode ?? ''}
                 onChange={(event) => patch({ splitMode: event.target.value || null })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('splitMode')}
               />
             </Field>
-            <Field label="Main GPU" info={INFO.mainGpu}>
+            <Field label="Main GPU" info={INFO.mainGpu} source={source('mainGpu')}>
               <input
                 type="number"
                 value={params.mainGpu ?? ''}
                 onChange={(event) => patch({ mainGpu: parseOptionalInt(event.target.value) })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('mainGpu')}
               />
             </Field>
-            <Field label="Tensor split" info={INFO.tensorSplit}>
+            <Field label="Tensor split" info={INFO.tensorSplit} source={source('tensorSplit')}>
               <input
                 value={params.tensorSplit ?? ''}
                 onChange={(event) => patch({ tensorSplit: event.target.value || null })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('tensorSplit')}
               />
             </Field>
-            <Field label="Device list" info={INFO.device}>
+            <Field label="Device list" info={INFO.device} source={source('device')}>
               <input
                 value={params.device ?? ''}
                 onChange={(event) => patch({ device: event.target.value || null })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('device')}
               />
             </Field>
-            <label className="flex items-end gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(params.cpuMoe)}
-                onChange={(event) => patch({ cpuMoe: event.target.checked ? true : null })}
-              />
-              <span className="field-label" style={{ margin: 0 }}>
-                CPU MoE
-                <InfoTip text={INFO.cpuMoe} />
-              </span>
-            </label>
-            <Field label="N CPU MoE layers" info={INFO.nCpuMoe}>
+            <Field label="CPU MoE" info={INFO.cpuMoe} source={source('cpuMoe')}>
+              <select
+                value={boolSelect(params.cpuMoe)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  patch({ cpuMoe: next === '' ? null : next === 'on' });
+                }}
+                className={inputClass}
+              >
+                <option value="">{hint('cpuMoe')}</option>
+                <option value="on">on</option>
+                <option value="off">off</option>
+              </select>
+            </Field>
+            <Field label="N CPU MoE layers" info={INFO.nCpuMoe} source={source('nCpuMoe')}>
               <input
                 type="number"
                 value={params.nCpuMoe ?? ''}
                 onChange={(event) => patch({ nCpuMoe: parseOptionalInt(event.target.value) })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('nCpuMoe')}
               />
             </Field>
-            <Field label="Load mode" info={INFO.loadMode}>
+            <Field label="Load mode" info={INFO.loadMode} source={source('loadMode')}>
               <input
                 value={params.loadMode ?? ''}
                 onChange={(event) => patch({ loadMode: event.target.value || null })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('loadMode')}
               />
             </Field>
-            <label className="flex items-end gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(params.jinja)}
-                onChange={(event) => patch({ jinja: event.target.checked ? true : null })}
-              />
-              <span className="field-label" style={{ margin: 0 }}>
-                Jinja
-                <InfoTip text={INFO.jinja} />
-              </span>
-            </label>
+            <Field label="Jinja" info={INFO.jinja} source={source('jinja')}>
+              <select
+                value={boolSelect(params.jinja)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  patch({ jinja: next === '' ? null : next === 'on' });
+                }}
+                className={inputClass}
+              >
+                <option value="">{hint('jinja')}</option>
+                <option value="on">on</option>
+                <option value="off">off</option>
+              </select>
+            </Field>
             {params.jinja ? (
               <div className="sm:col-span-2">
-                <Field label="Jinja template" info={INFO.jinjaTemplate}>
+                <Field label="Jinja template" info={INFO.jinjaTemplate} source={source('chatTemplate')}>
                   <textarea
                     value={params.chatTemplate ?? ''}
                     onChange={(event) => patch({ chatTemplate: event.target.value || null })}
                     rows={12}
                     spellCheck={false}
                     className={`${inputClass} field-mono`}
-                    placeholder="Paste the Jinja chat template. Leave empty to use the model's built-in template."
+                    placeholder={hint('chatTemplate') || "Paste the Jinja chat template. Leave empty to use the model's built-in template."}
                   />
                 </Field>
               </div>
             ) : (
-              <Field label="Chat template" info={INFO.chatTemplate}>
+              <Field label="Chat template" info={INFO.chatTemplate} source={source('chatTemplate')}>
                 <input
                   value={params.chatTemplate ?? ''}
                   onChange={(event) => patch({ chatTemplate: event.target.value || null })}
                   className={inputClass}
-                  placeholder="omit — chatml, llama3, …"
+                  placeholder={hint('chatTemplate')}
                 />
               </Field>
             )}
-            <label className="flex items-end gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(params.metrics)}
-                onChange={(event) => patch({ metrics: event.target.checked ? true : null })}
-              />
-              <span className="field-label" style={{ margin: 0 }}>
-                Metrics
-                <InfoTip text={INFO.metrics} />
-              </span>
-            </label>
-            <Field label="Model alias" info={INFO.alias}>
+            <Field label="Metrics" info={INFO.metrics} source={source('metrics')}>
+              <select
+                value={boolSelect(params.metrics)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  patch({ metrics: next === '' ? null : next === 'on' });
+                }}
+                className={inputClass}
+              >
+                <option value="">{hint('metrics')}</option>
+                <option value="on">on</option>
+                <option value="off">off</option>
+              </select>
+            </Field>
+            <Field label="Model alias" info={INFO.alias} source={source('alias')}>
               <input
                 value={params.alias ?? ''}
                 onChange={(event) => patch({ alias: event.target.value || null })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('alias')}
               />
             </Field>
           </div>
-        </details>
-      </section>
+      </MaybeCollapsible>
 
-      <section className="card space-y-3">
-        <h2 className="card-title">Extra flags</h2>
+      <MaybeCollapsible
+        title="Extra flags"
+        collapsible={collapsible}
+        className="card space-y-3"
+        description={sectionInheritLine(LLAMA_EXTRA_KEYS, params, inheritValues, LLAMA_ENGINE_DEFAULTS)}
+        actions={resetAction(LLAMA_EXTRA_KEYS)}
+      >
         <label>
           <span className="field-label">
             Flags
             <InfoTip text={INFO.extraFlags} />
+            <InheritPill layer={source('extraFlags')} />
           </span>
           <textarea
-            value={params.extraFlags}
+            value={params.extraFlags ?? ''}
             onChange={(event) => patch({ extraFlags: event.target.value })}
             rows={3}
             className={inputClass}
-            placeholder="appended last — do not set -m, --model, --models-dir, --host, or --port"
+            placeholder={hint('extraFlags') || 'appended last — do not set -m, --model, --models-dir, --host, or --port'}
           />
         </label>
         {extraFlagsError ? <p className="err-banner">{extraFlagsError}</p> : null}
-      </section>
+      </MaybeCollapsible>
 
-      <section className="card space-y-3">
-        <div className="preview-head">
-          <h2 className="card-title">Command preview</h2>
+      <MaybeCollapsible
+        title="Command preview"
+        collapsible={collapsible}
+        className="card space-y-3"
+        actions={
           <button
             type="button"
             className="toggle"
@@ -461,9 +569,10 @@ export default function ServerParamsFields({
           >
             {copied ? 'Copied' : 'Copy'}
           </button>
-        </div>
+        }
+      >
         <pre className="preview-box">{command || '…'}</pre>
-      </section>
+      </MaybeCollapsible>
     </>
   );
 }

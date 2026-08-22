@@ -20,15 +20,15 @@ export type CacheType =
   | 'q5_1';
 
 export interface ServerParams {
-  ctxSize: number;
-  gpuLayers: string | number;
-  flashAttn: FlashAttn;
+  ctxSize?: number | null;
+  gpuLayers?: string | number | null;
+  flashAttn?: FlashAttn | null;
   threads?: number | null;
-  parallel: number;
+  parallel?: number | null;
   batchSize?: number | null;
   ubatchSize?: number | null;
-  kvOffload: boolean;
-  fit: FitMode;
+  kvOffload?: boolean | null;
+  fit?: FitMode | null;
   cacheTypeK?: CacheType | null;
   cacheTypeV?: CacheType | null;
   nPredict?: number | null;
@@ -45,9 +45,9 @@ export interface ServerParams {
   chatTemplate?: string | null;
   metrics?: boolean | null;
   alias?: string | null;
-  extraFlags: string;
-  tensorParallelSize?: number;
-  gpuMemoryUtilization?: number;
+  extraFlags?: string | null;
+  tensorParallelSize?: number | null;
+  gpuMemoryUtilization?: number | null;
   maxModelLen?: number | null;
   dtype?: string | null;
   quantization?: string | null;
@@ -65,6 +65,7 @@ export interface Cluster {
   name: string;
   engine: EngineType | string;
   description: string;
+  hfToken: string;
   nodeCount: number;
   runningCount: number;
   stoppedCount: number;
@@ -76,12 +77,74 @@ export interface ClusterIn {
   name: string;
   engine?: EngineType;
   description?: string;
+  hfToken?: string;
 }
 
 export interface ClusterUpdate {
   name?: string;
   engine?: EngineType;
   description?: string;
+  hfToken?: string;
+}
+
+export interface LlamaCppSettings {
+  ctxSize?: number | null;
+  gpuLayers?: string | number | null;
+  flashAttn?: FlashAttn | null;
+  threads?: number | null;
+  parallel?: number | null;
+  batchSize?: number | null;
+  ubatchSize?: number | null;
+  kvOffload?: boolean | null;
+  fit?: FitMode | null;
+  cacheTypeK?: CacheType | null;
+  cacheTypeV?: CacheType | null;
+  nPredict?: number | null;
+  keep?: number | null;
+  threadsBatch?: number | null;
+  splitMode?: string | null;
+  mainGpu?: number | null;
+  tensorSplit?: string | null;
+  device?: string | null;
+  cpuMoe?: boolean | null;
+  nCpuMoe?: number | null;
+  loadMode?: string | null;
+  jinja?: boolean | null;
+  chatTemplate?: string | null;
+  metrics?: boolean | null;
+  alias?: string | null;
+  extraFlags?: string | null;
+}
+
+export interface VllmSettings {
+  tensorParallelSize?: number | null;
+  gpuMemoryUtilization?: number | null;
+  maxModelLen?: number | null;
+  dtype?: string | null;
+  quantization?: string | null;
+  maxNumSeqs?: number | null;
+  swapSpace?: number | null;
+  kvCacheDtype?: string | null;
+  servedModelName?: string | null;
+  trustRemoteCode?: boolean | null;
+  enforceEager?: boolean | null;
+  enablePrefixCaching?: boolean | null;
+  extraFlags?: string | null;
+}
+
+export interface Settings {
+  hfToken: string;
+  libraryDir: string;
+  llamaCpp: LlamaCppSettings;
+  vllm: VllmSettings;
+  updatedAt: string;
+}
+
+export interface SettingsUpdate {
+  hfToken?: string;
+  libraryDir?: string;
+  llamaCpp?: LlamaCppSettings;
+  vllm?: VllmSettings;
 }
 
 export interface LastStart {
@@ -215,6 +278,66 @@ export interface EngineLogs {
   lines: number;
 }
 
+export interface DryRunCheck {
+  id: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface DryRunResult {
+  ok: boolean;
+  checks: DryRunCheck[];
+  argv: string[];
+  command: string;
+  modelFilename: string;
+  binary?: string | null;
+}
+
+export interface RequestLogEntry {
+  at: string;
+  model: string;
+  latencyMs: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  ok: boolean;
+  error: string;
+}
+
+export interface GpuMetrics {
+  name: string;
+  vendor: string;
+  cores: number | null;
+  memoryTotalBytes: number | null;
+  memoryUsedBytes: number | null;
+  memoryFreeBytes: number | null;
+  percent: number | null;
+  unified: boolean;
+}
+
+export interface NodeMetrics {
+  hostname: string;
+  os: string;
+  osVersion: string;
+  arch: string;
+  cpuModel: string;
+  cpuCores: number | null;
+  cpuPercent: number | null;
+  load1: number | null;
+  load5: number | null;
+  load15: number | null;
+  memTotalBytes: number | null;
+  memUsedBytes: number | null;
+  memFreeBytes: number | null;
+  diskTotalBytes: number | null;
+  diskUsedBytes: number | null;
+  diskFreeBytes: number | null;
+  diskMount: string;
+  gpus: GpuMetrics[];
+  local: boolean;
+  checkedAt: string;
+  detail: string | null;
+}
+
 export interface RemoteModel {
   name: string;
   sizeBytes: number;
@@ -262,12 +385,26 @@ export interface DownloadModelResult {
 
 export type DownloadStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
+export interface LibraryModel {
+  kind: 'llama.cpp' | 'vllm' | string;
+  name: string;
+  sizeBytes: number;
+  mtime: string;
+}
+
+export interface LibraryList {
+  libraryDir: string;
+  items: LibraryModel[];
+}
+
 export interface DownloadJob {
   id: string;
   nodeId: string;
   clusterId: string;
   nodeName: string;
   source: string;
+  kind?: string;
+  target?: string;
   repo: string;
   filename: string;
   url: string;
@@ -300,6 +437,7 @@ export interface PreviewIn {
   modelFilename?: string;
   vllmImage?: string;
   llamaServerPath?: string;
+  applySettings?: boolean;
 }
 
 export interface PreviewOut {

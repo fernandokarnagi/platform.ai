@@ -1,5 +1,19 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { MaybeCollapsible } from '@components/CollapsibleCard';
+import InheritPill from '@components/InheritPill';
 import InfoTip from '@components/InfoTip';
+import {
+  VLLM_ADVANCED_KEYS,
+  VLLM_ENGINE_DEFAULTS,
+  VLLM_EXTRA_KEYS,
+  VLLM_LOAD_KEYS,
+  clearParamKeys,
+  inheritPlaceholder,
+  inheritResolved,
+  sectionInheritLine,
+  sectionSetCount,
+  type InheritLayer,
+} from '@/lib/inherit';
 import { apiErrorStatus, nodeService } from '@services/nodeService';
 import type { ServerParams } from '@/types';
 
@@ -8,7 +22,7 @@ const inputClass = 'field-input';
 const INFO = {
   tensorParallelSize: 'Number of GPUs to split the model across (--tensor-parallel-size / -tp). 1 keeps the model on one GPU.',
   gpuMemoryUtilization: 'Fraction of GPU memory vLLM may use (--gpu-memory-utilization). Lower this if the node also runs other GPU work.',
-  maxModelLen: 'Maximum context length in tokens (--max-model-len). Omit to use the model default.',
+  maxModelLen: 'Maximum context length in tokens (--max-model-len). Omit to use the model default. Long-context models (128k/256k) often need a cap or KV cache will not fit.',
   dtype: 'Weight/activation dtype (--dtype): auto, half, float16, bfloat16, or float32.',
   quantization: 'Quantization method (--quantization), e.g. awq, gptq, fp8, bitsandbytes. Omit if the weights are already the right format.',
   maxNumSeqs: 'Maximum concurrent sequences (--max-num-seqs).',
@@ -25,12 +39,23 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function Field({ label, info, children }: { label: string; info?: string; children: ReactNode }) {
+function Field({
+  label,
+  info,
+  source,
+  children,
+}: {
+  label: string;
+  info?: string;
+  source?: InheritLayer;
+  children: ReactNode;
+}) {
   return (
     <div>
       <span className="field-label">
         {label}
         {info ? <InfoTip text={info} /> : null}
+        {source ? <InheritPill layer={source} /> : null}
       </span>
       {children}
     </div>
@@ -43,14 +68,16 @@ function parseOptionalInt(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function parseRequiredInt(value: string, fallback: number): number {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
+function parseOptionalFloat(value: string): number | null {
+  if (value.trim() === '') return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-function parseRequiredFloat(value: string, fallback: number): number {
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+function boolSelect(value: boolean | null | undefined): '' | 'on' | 'off' {
+  if (value === true) return 'on';
+  if (value === false) return 'off';
+  return '';
 }
 
 export interface VllmParamsFieldsProps {
@@ -64,6 +91,10 @@ export interface VllmParamsFieldsProps {
   llamaServerPath?: string;
   onChange: (params: ServerParams) => void;
   onPreviewError: (message: string | null) => void;
+  emptyLabel?: string;
+  inheritValues?: Partial<ServerParams> | null;
+  applySettings?: boolean;
+  collapsible?: boolean;
 }
 
 export default function VllmParamsFields({
@@ -77,6 +108,10 @@ export default function VllmParamsFields({
   llamaServerPath = '',
   onChange,
   onPreviewError,
+  emptyLabel = 'Settings',
+  inheritValues = null,
+  applySettings = true,
+  collapsible = false,
 }: VllmParamsFieldsProps) {
   const [command, setCommand] = useState('');
   const [copied, setCopied] = useState(false);
@@ -96,6 +131,7 @@ export default function VllmParamsFields({
               modelFilename: modelFilename || '$MODEL',
               vllmImage,
               llamaServerPath,
+              applySettings,
             },
             engine,
           );
@@ -120,53 +156,87 @@ export default function VllmParamsFields({
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [listenHost, listenPort, modelDir, modelFilename, vllmImage, engine, llamaServerPath, params, onPreviewError]);
+  }, [listenHost, listenPort, modelDir, modelFilename, vllmImage, engine, llamaServerPath, params, onPreviewError, applySettings]);
 
   function patch(partial: Partial<ServerParams>) {
     onChange({ ...params, ...partial });
   }
 
+  const resetLabel = emptyLabel === 'Settings' ? 'Reset to Settings' : 'Reset to engine';
+
+  function resolved(key: keyof ServerParams) {
+    return inheritResolved(params[key], inheritValues?.[key], VLLM_ENGINE_DEFAULTS[key]);
+  }
+
+  function hint(key: keyof ServerParams): string {
+    return inheritPlaceholder(inheritResolved(null, inheritValues?.[key], VLLM_ENGINE_DEFAULTS[key]));
+  }
+
+  function source(key: keyof ServerParams): InheritLayer {
+    return resolved(key).layer;
+  }
+
+  function resetAction(keys: readonly (keyof ServerParams)[]) {
+    const set = sectionSetCount(keys, params);
+    return (
+      <button
+        type="button"
+        className="toggle"
+        disabled={set === 0}
+        onClick={() => onChange(clearParamKeys(params, keys))}
+      >
+        {resetLabel}
+      </button>
+    );
+  }
+
   return (
     <>
-      <section className="card space-y-4">
-        <h2 className="card-title">Load parameters</h2>
+      <MaybeCollapsible
+        title="Load parameters"
+        collapsible={collapsible}
+        description={sectionInheritLine(VLLM_LOAD_KEYS, params, inheritValues, VLLM_ENGINE_DEFAULTS)}
+        actions={resetAction(VLLM_LOAD_KEYS)}
+      >
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Tensor parallel" info={INFO.tensorParallelSize}>
+          <Field label="Tensor parallel" info={INFO.tensorParallelSize} source={source('tensorParallelSize')}>
             <input
               type="number"
               min={1}
-              value={params.tensorParallelSize ?? 1}
-              onChange={(event) => patch({ tensorParallelSize: parseRequiredInt(event.target.value, 1) })}
+              value={params.tensorParallelSize ?? ''}
+              onChange={(event) => patch({ tensorParallelSize: parseOptionalInt(event.target.value) })}
               className={inputClass}
+              placeholder={hint('tensorParallelSize')}
             />
           </Field>
-          <Field label="GPU memory util" info={INFO.gpuMemoryUtilization}>
+          <Field label="GPU memory util" info={INFO.gpuMemoryUtilization} source={source('gpuMemoryUtilization')}>
             <input
               type="number"
               min={0.1}
               max={1}
               step={0.05}
-              value={params.gpuMemoryUtilization ?? 0.9}
-              onChange={(event) => patch({ gpuMemoryUtilization: parseRequiredFloat(event.target.value, 0.9) })}
+              value={params.gpuMemoryUtilization ?? ''}
+              onChange={(event) => patch({ gpuMemoryUtilization: parseOptionalFloat(event.target.value) })}
               className={inputClass}
+              placeholder={hint('gpuMemoryUtilization')}
             />
           </Field>
-          <Field label="Max model length" info={INFO.maxModelLen}>
+          <Field label="Max model length" info={INFO.maxModelLen} source={source('maxModelLen')}>
             <input
               type="number"
               value={params.maxModelLen ?? ''}
               onChange={(event) => patch({ maxModelLen: parseOptionalInt(event.target.value) })}
               className={inputClass}
-              placeholder="omit"
+              placeholder={hint('maxModelLen')}
             />
           </Field>
-          <Field label="Dtype" info={INFO.dtype}>
+          <Field label="Dtype" info={INFO.dtype} source={source('dtype')}>
             <select
               value={params.dtype ?? ''}
               onChange={(event) => patch({ dtype: event.target.value || null })}
               className={inputClass}
             >
-              <option value="">omit</option>
+              <option value="">{hint('dtype')}</option>
               <option value="auto">auto</option>
               <option value="half">half</option>
               <option value="float16">float16</option>
@@ -174,113 +244,134 @@ export default function VllmParamsFields({
               <option value="float32">float32</option>
             </select>
           </Field>
-          <Field label="Quantization" info={INFO.quantization}>
+          <Field label="Quantization" info={INFO.quantization} source={source('quantization')}>
             <input
               value={params.quantization ?? ''}
               onChange={(event) => patch({ quantization: event.target.value || null })}
               className={inputClass}
-              placeholder="omit — awq, gptq, fp8"
+              placeholder={hint('quantization')}
             />
           </Field>
-          <Field label="Max sequences" info={INFO.maxNumSeqs}>
+          <Field label="Max sequences" info={INFO.maxNumSeqs} source={source('maxNumSeqs')}>
             <input
               type="number"
               value={params.maxNumSeqs ?? ''}
               onChange={(event) => patch({ maxNumSeqs: parseOptionalInt(event.target.value) })}
               className={inputClass}
-              placeholder="omit"
+              placeholder={hint('maxNumSeqs')}
             />
           </Field>
         </div>
-      </section>
+      </MaybeCollapsible>
 
-      <section className="card">
-        <details>
-          <summary className="card-title cursor-pointer">Advanced</summary>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <Field label="Swap space (GiB)" info={INFO.swapSpace}>
+      <MaybeCollapsible
+        title="Advanced"
+        collapsible
+        defaultOpen={false}
+        className="card"
+        description={sectionInheritLine(VLLM_ADVANCED_KEYS, params, inheritValues, VLLM_ENGINE_DEFAULTS)}
+        actions={resetAction(VLLM_ADVANCED_KEYS)}
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Swap space (GiB)" info={INFO.swapSpace} source={source('swapSpace')}>
               <input
                 type="number"
                 value={params.swapSpace ?? ''}
                 onChange={(event) => patch({ swapSpace: parseOptionalInt(event.target.value) })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('swapSpace')}
               />
             </Field>
-            <Field label="KV cache dtype" info={INFO.kvCacheDtype}>
+            <Field label="KV cache dtype" info={INFO.kvCacheDtype} source={source('kvCacheDtype')}>
               <input
                 value={params.kvCacheDtype ?? ''}
                 onChange={(event) => patch({ kvCacheDtype: event.target.value || null })}
                 className={inputClass}
-                placeholder="omit — auto, fp8"
+                placeholder={hint('kvCacheDtype')}
               />
             </Field>
-            <Field label="Served model name" info={INFO.servedModelName}>
+            <Field label="Served model name" info={INFO.servedModelName} source={source('servedModelName')}>
               <input
                 value={params.servedModelName ?? params.alias ?? ''}
                 onChange={(event) => patch({ servedModelName: event.target.value || null })}
                 className={inputClass}
-                placeholder="omit"
+                placeholder={hint('servedModelName')}
               />
             </Field>
-            <label className="flex items-end gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(params.trustRemoteCode)}
-                onChange={(event) => patch({ trustRemoteCode: event.target.checked ? true : null })}
-              />
-              <span className="field-label" style={{ margin: 0 }}>
-                Trust remote code
-                <InfoTip text={INFO.trustRemoteCode} />
-              </span>
-            </label>
-            <label className="flex items-end gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(params.enforceEager)}
-                onChange={(event) => patch({ enforceEager: event.target.checked ? true : null })}
-              />
-              <span className="field-label" style={{ margin: 0 }}>
-                Enforce eager
-                <InfoTip text={INFO.enforceEager} />
-              </span>
-            </label>
-            <label className="flex items-end gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(params.enablePrefixCaching)}
-                onChange={(event) => patch({ enablePrefixCaching: event.target.checked ? true : null })}
-              />
-              <span className="field-label" style={{ margin: 0 }}>
-                Prefix caching
-                <InfoTip text={INFO.enablePrefixCaching} />
-              </span>
-            </label>
+            <Field label="Trust remote code" info={INFO.trustRemoteCode} source={source('trustRemoteCode')}>
+              <select
+                value={boolSelect(params.trustRemoteCode)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  patch({ trustRemoteCode: next === '' ? null : next === 'on' });
+                }}
+                className={inputClass}
+              >
+                <option value="">{hint('trustRemoteCode')}</option>
+                <option value="on">on</option>
+                <option value="off">off</option>
+              </select>
+            </Field>
+            <Field label="Enforce eager" info={INFO.enforceEager} source={source('enforceEager')}>
+              <select
+                value={boolSelect(params.enforceEager)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  patch({ enforceEager: next === '' ? null : next === 'on' });
+                }}
+                className={inputClass}
+              >
+                <option value="">{hint('enforceEager')}</option>
+                <option value="on">on</option>
+                <option value="off">off</option>
+              </select>
+            </Field>
+            <Field label="Prefix caching" info={INFO.enablePrefixCaching} source={source('enablePrefixCaching')}>
+              <select
+                value={boolSelect(params.enablePrefixCaching)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  patch({ enablePrefixCaching: next === '' ? null : next === 'on' });
+                }}
+                className={inputClass}
+              >
+                <option value="">{hint('enablePrefixCaching')}</option>
+                <option value="on">on</option>
+                <option value="off">off</option>
+              </select>
+            </Field>
           </div>
-        </details>
-      </section>
+      </MaybeCollapsible>
 
-      <section className="card space-y-3">
-        <h2 className="card-title">Extra flags</h2>
+      <MaybeCollapsible
+        title="Extra flags"
+        collapsible={collapsible}
+        className="card space-y-3"
+        description={sectionInheritLine(VLLM_EXTRA_KEYS, params, inheritValues, VLLM_ENGINE_DEFAULTS)}
+        actions={resetAction(VLLM_EXTRA_KEYS)}
+      >
         <label>
           <span className="field-label">
             Flags
             <InfoTip text={INFO.extraFlags} />
+            <InheritPill layer={source('extraFlags')} />
           </span>
           <textarea
-            value={params.extraFlags}
+            value={params.extraFlags ?? ''}
             onChange={(event) => patch({ extraFlags: event.target.value })}
             rows={3}
             className={inputClass}
-            placeholder="appended last — do not set --host, --port, --model, or -m"
+            placeholder={hint('extraFlags') || 'appended last — do not set --host, --port, --model, or -m'}
           />
         </label>
         {extraFlagsError ? <p className="err-banner">{extraFlagsError}</p> : null}
-      </section>
+      </MaybeCollapsible>
 
-      <section className="card space-y-3">
-        <div className="preview-head">
-          <h2 className="card-title">Command preview</h2>
+      <MaybeCollapsible
+        title="Command preview"
+        collapsible={collapsible}
+        className="card space-y-3"
+        actions={
           <button
             type="button"
             className="toggle"
@@ -295,9 +386,10 @@ export default function VllmParamsFields({
           >
             {copied ? 'Copied' : 'Copy'}
           </button>
-        </div>
+        }
+      >
         <pre className="preview-box">{command || '…'}</pre>
-      </section>
+      </MaybeCollapsible>
     </>
   );
 }

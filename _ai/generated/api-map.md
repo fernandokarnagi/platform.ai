@@ -1,12 +1,12 @@
 ---
 title: Generated API map
 tags: [generated, api]
-updated: 2026-08-18
+updated: 2026-08-22
 ---
 
 # Generated API map
 
-Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
+Written by `scripts/update-brain.sh` on 2026-08-22. Do not edit.
 
 | Method | Path | File |
 |---|---|---|
@@ -24,19 +24,28 @@ Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
 | POST | `/downloads/{job_id}/retry` | `downloads.py` |
 | POST | `/engines/{engine_name}/preview` | `engines.py` |
 | GET | `/health` | `main.py` |
+| POST | `/library/download` | `library.py` |
+| GET | `/library/huggingface` | `library.py` |
+| GET | `/library/models` | `library.py` |
 | DELETE | `/nodes/{node_id}` | `nodes.py` |
 | GET | `/nodes/{node_id}` | `nodes.py` |
 | PUT | `/nodes/{node_id}` | `nodes.py` |
 | POST | `/nodes/{node_id}/chat` | `nodes.py` |
 | GET | `/nodes/{node_id}/engine` | `nodes.py` |
+| POST | `/nodes/{node_id}/engine/dry-run` | `nodes.py` |
 | GET | `/nodes/{node_id}/engine/logs` | `nodes.py` |
 | POST | `/nodes/{node_id}/engine/restart` | `nodes.py` |
 | POST | `/nodes/{node_id}/engine/start` | `nodes.py` |
 | POST | `/nodes/{node_id}/engine/stop` | `nodes.py` |
+| GET | `/nodes/{node_id}/metrics` | `nodes.py` |
 | DELETE | `/nodes/{node_id}/models` | `nodes.py` |
 | GET | `/nodes/{node_id}/models` | `nodes.py` |
+| POST | `/nodes/{node_id}/models/copy` | `nodes.py` |
 | POST | `/nodes/{node_id}/models/download` | `nodes.py` |
 | GET | `/nodes/{node_id}/models/huggingface` | `nodes.py` |
 | GET | `/nodes/{node_id}/models/openai` | `nodes.py` |
+| GET | `/nodes/{node_id}/requests` | `nodes.py` |
 | GET | `/nodes/{node_id}/status` | `nodes.py` |
 | POST | `/nodes/{node_id}/test-ssh` | `nodes.py` |
+| GET | `/settings` | `settings.py` |
+| PUT | `/settings` | `settings.py` |

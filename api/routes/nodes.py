@@ -1,5 +1,8 @@
 from datetime import datetime
 import asyncio
+import os
+import re
+import time
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
 from api.database import get_database
@@ -10,18 +13,25 @@ from api.engines import (
     is_vllm_engine,
 )
 from api.helpers import (
+    apply_engine_settings,
     apply_node_location,
     download_helper,
     is_local_node,
     models_cache_is_fresh,
     node_helper,
     parse_object_id,
+    resolve_hf_token,
     safe_model_filename,
+    SETTINGS_DOC_ID,
 )
 from api.logger import get_logger
-from api.models.models import ChatIn, DeleteModelIn, DownloadModelIn, NodeIn, NodeUpdate, StartEngineIn
+from api.models.models import ChatIn, CopyLibraryIn, DeleteModelIn, DownloadModelIn, NodeIn, NodeUpdate, StartEngineIn
+from api.services import dry_run as dry_run_mod
 from api.services import engine as engine_mod
+from api.services import metrics as metrics_mod
 from api.services import openai_proxy as openai_proxy
+from api.services import request_log as request_log_mod
+from api.services import library as library_mod
 from api.services import ssh as ssh_mod
 from api.services import status_cache as status_cache_mod
 
@@ -56,6 +66,27 @@ async def _engine_for(db, node: dict):
         return resolve_engine(name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _cluster_for_node(db, node: dict):
+    cluster_id = node.get("clusterId")
+    if cluster_id is None:
+        return None
+    return await db.clusters.find_one({"_id": cluster_id})
+
+
+async def _hf_token_for(db, node: dict, override: str | None = None) -> str:
+    cluster = await _cluster_for_node(db, node)
+    settings = await db.settings.find_one({"_id": SETTINGS_DOC_ID})
+    return resolve_hf_token(node, cluster, override, settings)
+
+
+async def _settings_doc(db):
+    return await db.settings.find_one({"_id": SETTINGS_DOC_ID})
+
+
+async def _node_for_launch(db, node: dict) -> dict:
+    return apply_engine_settings(node, await _settings_doc(db))
 
 
 @router.get("/clusters/{cluster_id}/nodes")
@@ -162,6 +193,18 @@ async def test_ssh(node_id: str):
 def _vllm_crash_detail(log: str) -> str:
     text = log or ""
     lower = text.lower()
+    if "kv cache is needed" in lower or "estimated maximum model length" in lower:
+        match = re.search(r"estimated maximum model length is (\d+)", text, re.I)
+        cap = match.group(1) if match else None
+        if cap:
+            return (
+                f"vLLM KV cache is too small for this model's context. "
+                f"Set max model length to {cap} or lower, then Serve again."
+            )
+        return (
+            "vLLM KV cache is too small for this model's context. "
+            "Set max model length lower, then Serve again."
+        )
     if "mlx" in lower and ("out of memory" in lower or "oom" in lower):
         return "vLLM Metal ran out of unified memory. Use a smaller model or lower max model length."
     if "vllm_metal" in lower and ("not found" in lower or "no module" in lower or "importerror" in lower):
@@ -264,7 +307,8 @@ async def start_engine(node_id: str, payload: StartEngineIn):
         selected = (payload.modelFilename or node.get("selectedModel") or "").strip()
         if is_vllm_engine(engine) and not selected:
             raise HTTPException(status_code=400, detail="Select a model before starting vLLM")
-        start_node = {**node, "selectedModel": selected, "modelFilename": selected}
+        launch = await _node_for_launch(db, node)
+        start_node = {**launch, "selectedModel": selected, "modelFilename": selected}
         argv = engine.build_argv(start_node, model_dir)
         if is_docker_vllm(engine):
             started = await ssh_mod.run_command(
@@ -293,6 +337,22 @@ async def start_engine(node_id: str, payload: StartEngineIn):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
+    except ssh_mod.SshError as exc:
+        raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
+
+
+@router.post("/nodes/{node_id}/engine/dry-run")
+async def dry_run_engine(node_id: str, payload: StartEngineIn):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    engine = await _engine_for(db, node)
+    try:
+        launch = await _node_for_launch(db, node)
+        return await dry_run_mod.run(launch, engine, payload.modelFilename or "")
+    except ForbiddenExtraFlagsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ssh_mod.SshError as exc:
         raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
 
@@ -423,7 +483,7 @@ async def list_hf_repo_files(node_id: str, repo: str = Query(...)):
     parsed = engine.parse_hf_ref(repo, "")
     if not parsed["repo"] or "/" not in parsed["repo"]:
         raise HTTPException(status_code=400, detail="repo must look like org/model")
-    token = node.get("hfToken") or ""
+    token = await _hf_token_for(db, node)
     suffixes = None if is_vllm_engine(engine) else (".gguf",)
     files = await _list_hf_file_details(parsed["repo"], parsed["revision"], token, suffixes)
     if not files:
@@ -448,7 +508,7 @@ async def download_model(node_id: str, payload: DownloadModelIn):
         if payload.source == "huggingface":
             if not payload.repo:
                 raise HTTPException(status_code=400, detail="repo required")
-            token = payload.hfToken or node.get("hfToken") or ""
+            token = await _hf_token_for(db, node, payload.hfToken)
             parsed = engine.parse_hf_ref(payload.repo, payload.filename or "")
             if not parsed["repo"] or "/" not in parsed["repo"]:
                 raise HTTPException(status_code=400, detail="repo must look like org/model")
@@ -552,6 +612,75 @@ async def download_model(node_id: str, payload: DownloadModelIn):
         raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
 
 
+@router.post("/nodes/{node_id}/models/copy", status_code=status.HTTP_202_ACCEPTED)
+async def copy_from_library(node_id: str, payload: CopyLibraryIn):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    engine = await _engine_for(db, node)
+    settings = await db.settings.find_one({"_id": SETTINGS_DOC_ID})
+    try:
+        family = library_mod.normalize_kind(payload.kind)
+        filename = safe_model_filename(payload.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    node_family = library_mod.node_kind(node, engine)
+    if family != node_family:
+        raise HTTPException(status_code=400, detail=f"This node uses {node_family} models")
+    try:
+        local_path = library_mod.require_library_item(settings, family, filename)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Not in the model library") from None
+    model_dir = await _expand_dir(node, engine)
+    dest = f"{model_dir.rstrip('/')}/{filename}"
+    now = datetime.utcnow()
+    size = os.path.getsize(local_path) if os.path.isfile(local_path) else 0
+    if os.path.isdir(local_path):
+        size = library_mod._dir_size(local_path)
+    job = {
+        "nodeId": node["_id"],
+        "clusterId": node.get("clusterId"),
+        "nodeName": node.get("name") or "",
+        "engine": getattr(engine, "NAME", node.get("engine") or family),
+        "kind": family,
+        "target": "node",
+        "jobType": "copy",
+        "source": "library",
+        "repo": "",
+        "filename": filename,
+        "url": local_path,
+        "modelDir": model_dir,
+        "status": "running",
+        "bytes": 0,
+        "totalBytes": size,
+        "detail": "",
+        "createdAt": now,
+        "updatedAt": now,
+        "finishedAt": None,
+    }
+    inserted = await db.downloads.insert_one(job)
+    job["_id"] = inserted.inserted_id
+
+    async def _run():
+        try:
+            await library_mod.copy_to_node(node, local_path, dest)
+            stamp = datetime.utcnow()
+            await db.downloads.update_one(
+                {"_id": job["_id"]},
+                {"$set": {"status": "done", "bytes": size, "detail": "", "updatedAt": stamp, "finishedAt": stamp}},
+            )
+            await db.nodes.update_one({"_id": node["_id"]}, {"$unset": {"modelsCache": ""}})
+        except Exception as exc:
+            stamp = datetime.utcnow()
+            await db.downloads.update_one(
+                {"_id": job["_id"]},
+                {"$set": {"status": "failed", "detail": str(exc), "updatedAt": stamp, "finishedAt": stamp}},
+            )
+
+    asyncio.create_task(_run())
+    created = await db.downloads.find_one({"_id": job["_id"]})
+    return download_helper(created)
+
+
 @router.delete("/nodes/{node_id}/models", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_model(node_id: str, payload: DeleteModelIn):
     db = get_database()
@@ -568,6 +697,16 @@ async def delete_model(node_id: str, payload: DeleteModelIn):
         raise HTTPException(status_code=502, detail=f"SSH failed: {exc}") from exc
     await db.nodes.update_one({"_id": node["_id"]}, {"$unset": {"modelsCache": ""}})
     return None
+
+
+@router.get("/nodes/{node_id}/metrics")
+async def node_metrics(node_id: str):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    try:
+        return await metrics_mod.collect_node_metrics(node)
+    except ssh_mod.SshError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/nodes/{node_id}/status")
@@ -596,6 +735,13 @@ async def openai_models(node_id: str):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.get("/nodes/{node_id}/requests")
+async def list_requests(node_id: str):
+    db = get_database()
+    node = await _require_node(db, node_id)
+    return request_log_mod.helper(node)
+
+
 @router.post("/nodes/{node_id}/chat")
 async def chat(node_id: str, payload: ChatIn):
     db = get_database()
@@ -619,12 +765,36 @@ async def chat(node_id: str, payload: ChatIn):
         body["repetition_penalty"] = payload.repetitionPenalty
     if payload.maxTokens is not None:
         body["max_tokens"] = payload.maxTokens
+    started = time.perf_counter()
+    error = ""
+    reply = None
     try:
-        return await openai_proxy.chat_completions(
+        reply = await openai_proxy.chat_completions(
             node.get("openaiBaseUrl") or "",
             node.get("openaiApiKey") or "",
             body,
         )
+        return reply
     except openai_proxy.OpenAIProxyError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        error = str(exc)
+        raise HTTPException(status_code=502, detail=error) from exc
+    finally:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        usage = (reply or {}).get("usage") if isinstance(reply, dict) else None
+        prompt_tokens, completion_tokens = request_log_mod.from_usage(usage, body["messages"])
+        try:
+            await request_log_mod.append(
+                db,
+                node["_id"],
+                request_log_mod.entry(
+                    model=payload.model,
+                    latency_ms=latency_ms,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens if not error else None,
+                    ok=not error,
+                    error=error,
+                ),
+            )
+        except Exception:
+            logger.exception("request log append failed")
 

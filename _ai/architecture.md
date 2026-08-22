@@ -1,7 +1,7 @@
 ---
 title: Architecture
 tags: [architecture]
-updated: 2026-08-16
+updated: 2026-08-22
 ---
 
 # Architecture
@@ -37,13 +37,19 @@ Use [[runbook]] / `./start.sh`. If the Mongo container already exists, start reu
 | `api/main.py` | FastAPI app, CORS, routers, `/health` |
 | `api/database.py` | Motor client, unique index on `clusters.name` |
 | `api/routes/clusters.py` | Cluster CRUD |
-| `api/routes/nodes.py` | Node CRUD + SSH/local + engine + models + chat |
+| `api/routes/settings.py` | singleton Settings (`hfToken`, `libraryDir`, `llamaCpp`, `vllm`) |
+| `api/routes/library.py` | model library catalog + fetch into Settings `libraryDir` |
+| `api/routes/nodes.py` | Node CRUD + SSH/local + engine + models + chat + metrics + dry-run + request log |
+| `api/services/metrics.py` | live host spec + utilization via SSH/local python |
+| `api/services/request_log.py` | last 50 proxied chat calls on the node |
+| `api/services/dry_run.py` | start checks + command preview, no process |
 | `api/routes/engines.py` | `POST /engines/{engine}/preview` |
 | `api/engines/llama_cpp.py` | llama.cpp argv + shell scripts |
 | `api/engines/vllm.py` | vLLM argv + snapshot download scripts |
-| `api/services/ssh.py` | `run_command` — SSH or local bash |
+| `api/services/ssh.py` | `run_command` — SSH or local bash. `push_path` copies library files onto a node |
 | `api/services/openai_proxy.py` | `/models` and `/chat/completions` |
-| `api/helpers.py` | `is_local_host`, serialisers, `safe_model_filename` |
+| `api/services/library.py` | library dir layout + catalog + copy-to-node |
+| `api/helpers.py` | `is_local_host`, serialisers, `safe_model_filename`, `resolve_library_dir` |
 
 See [[generated/file-map]] for the current file list.
 

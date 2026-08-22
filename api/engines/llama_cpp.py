@@ -1,6 +1,8 @@
 import re
 import shlex
 
+from api.helpers import merge_llama_cpp_params
+
 FORBIDDEN_EXTRA = {"-m", "--model", "--models-dir", "--host", "--port"}
 _HF_HOST = re.compile(r"^https?://(huggingface\.co|hf\.co)/", re.I)
 
@@ -32,7 +34,7 @@ class LlamaCppEngine:
 
     @staticmethod
     def build_argv(node: dict, model_dir_expanded: str) -> list[str]:
-        params = node.get("serverParams") or {}
+        params = merge_llama_cpp_params(node.get("serverParams") or {})
         argv = [
             "--models-dir", model_dir_expanded.rstrip("/") or (node.get("modelDir") or "~/models"),
             "--host", str(node.get("listenHost") or "0.0.0.0"),

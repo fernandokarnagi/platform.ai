@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useLocation, useMatch, useNavigate } from 'react-router-dom';
 import ErrorBanner from '@components/ErrorBanner';
+import InheritPill from '@components/InheritPill';
 import SuccessModal from '@components/SuccessModal';
 import InfoTip from '@components/InfoTip';
 import ServerParamsFields from '@components/ServerParamsFields';
@@ -10,6 +11,7 @@ import { useClusters } from '@contexts/ClusterContext';
 import { engineBinaryName, engineLabel, isVllm, isVllmDocker, isVllmMetal, previewEnginePath } from '@/lib/engine';
 import { clusterService } from '@services/clusterService';
 import { nodeService } from '@services/nodeService';
+import { settingsService } from '@services/settingsService';
 import type { Node, NodeIn, NodeType, ServerParams, SshAuthType, TestSshResult } from '@/types';
 
 const inputClass = 'field-input';
@@ -20,15 +22,15 @@ function errorMessage(err: unknown): string {
 
 function defaultServerParams(): ServerParams {
   return {
-    ctxSize: 0,
-    gpuLayers: 'auto',
-    flashAttn: 'auto',
+    ctxSize: null,
+    gpuLayers: null,
+    flashAttn: null,
     threads: null,
-    parallel: 1,
+    parallel: null,
     batchSize: null,
     ubatchSize: null,
-    kvOffload: true,
-    fit: 'on',
+    kvOffload: null,
+    fit: null,
     cacheTypeK: null,
     cacheTypeV: null,
     nPredict: null,
@@ -46,8 +48,8 @@ function defaultServerParams(): ServerParams {
     metrics: null,
     alias: null,
     extraFlags: '',
-    tensorParallelSize: 1,
-    gpuMemoryUtilization: 0.9,
+    tensorParallelSize: null,
+    gpuMemoryUtilization: null,
     maxModelLen: null,
     dtype: null,
     quantization: null,
@@ -70,12 +72,23 @@ function parseRequiredInt(value: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function Field({ label, info, children }: { label: string; info?: string; children: ReactNode }) {
+function Field({
+  label,
+  info,
+  source,
+  children,
+}: {
+  label: string;
+  info?: string;
+  source?: 'set' | 'settings' | 'engine' | 'cluster' | 'none';
+  children: ReactNode;
+}) {
   return (
     <div>
       <span className="field-label">
         {label}
         {info ? <InfoTip text={info} /> : null}
+        {source ? <InheritPill layer={source} /> : null}
       </span>
       {children}
     </div>
@@ -110,6 +123,10 @@ export default function NodeFormScreen() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sshResult, setSshResult] = useState<TestSshResult | null>(null);
   const [loadedClusterId, setLoadedClusterId] = useState<string | null>(clusterId ?? null);
+  const [clusterHfToken, setClusterHfToken] = useState('');
+  const [settingsHfToken, setSettingsHfToken] = useState('');
+  const [settingsLlamaCpp, setSettingsLlamaCpp] = useState<Partial<ServerParams> | null>(null);
+  const [settingsVllm, setSettingsVllm] = useState<Partial<ServerParams> | null>(null);
 
   const [name, setName] = useState('');
   const [nodeType, setNodeType] = useState<NodeType>('local');
@@ -135,6 +152,10 @@ export default function NodeFormScreen() {
   const [serverParams, setServerParams] = useState<ServerParams>(defaultServerParams);
 
   const cluster = clusters.find((item) => item.id === (clusterId || loadedClusterId));
+  const clusterToken = (cluster?.hfToken || clusterHfToken || '').trim();
+  const settingsToken = settingsHfToken.trim();
+  const inheritedHfToken = clusterToken || settingsToken;
+  const inheritedHfLabel = clusterToken ? 'cluster token' : 'Settings token';
   const engine = cluster?.engine || nodeEngine || 'llama.cpp';
   const vllm = isVllm(engine);
   const vllmDocker = isVllmDocker(engine);
@@ -167,6 +188,27 @@ export default function NodeFormScreen() {
   }
 
   useEffect(() => {
+    let cancelled = false;
+    void settingsService
+      .get()
+      .then((settings) => {
+        if (cancelled) return;
+        setSettingsHfToken(settings.hfToken || '');
+        setSettingsLlamaCpp(settings.llamaCpp ? { ...settings.llamaCpp, extraFlags: settings.llamaCpp.extraFlags || '' } : null);
+        setSettingsVllm(settings.vllm ? { ...settings.vllm, extraFlags: settings.vllm.extraFlags || '' } : null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSettingsHfToken('');
+        setSettingsLlamaCpp(null);
+        setSettingsVllm(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!nodeId) return;
     let cancelled = false;
     setLoading(true);
@@ -176,6 +218,10 @@ export default function NodeFormScreen() {
         if (cancelled) return;
         applyNode(node);
         setReady(true);
+        void clusterService
+          .get(node.clusterId)
+          .then((clusterDoc) => setClusterHfToken(clusterDoc.hfToken || ''))
+          .catch(() => setClusterHfToken(''));
         setError(null);
       })
       .catch((err) => {
@@ -198,6 +244,7 @@ export default function NodeFormScreen() {
         if (cancelled) return;
         setLoadedClusterId(clusterDoc.id);
         setNodeEngine(clusterDoc.engine || '');
+        setClusterHfToken(clusterDoc.hfToken || '');
         setError(null);
       })
       .catch((err) => {
@@ -502,9 +549,12 @@ export default function NodeFormScreen() {
             <Field
               label="Hugging Face token"
               info={
-                vllm
-                  ? 'Optional token for gated Hugging Face snapshots on this node.'
-                  : 'Optional token for gated GGUF downloads from Hugging Face.'
+                inheritedHfToken
+                  ? `Leave empty to use the ${inheritedHfLabel}. Fill to override on this node only.`
+                  : 'Optional. Set the common token in Settings so every node can inherit it.'
+              }
+              source={
+                hfToken.trim() ? 'set' : clusterToken ? 'cluster' : settingsToken ? 'settings' : 'none'
               }
             >
               <input
@@ -512,7 +562,13 @@ export default function NodeFormScreen() {
                 value={hfToken}
                 onChange={(event) => setHfToken(event.target.value)}
                 className={inputClass}
-                placeholder="optional"
+                placeholder={
+                  clusterToken
+                    ? 'cluster token'
+                    : settingsToken
+                      ? 'Settings token'
+                      : 'none — set in Settings'
+                }
                 autoComplete="off"
               />
             </Field>
@@ -623,6 +679,9 @@ export default function NodeFormScreen() {
             llamaServerPath={llamaServerPath}
             onChange={setServerParams}
             onPreviewError={setPreviewError}
+            emptyLabel="Settings"
+            inheritValues={settingsVllm}
+            applySettings
           />
         ) : (
           <ServerParamsFields
@@ -632,6 +691,9 @@ export default function NodeFormScreen() {
             modelDir={modelDir}
             onChange={setServerParams}
             onPreviewError={setPreviewError}
+            emptyLabel="Settings"
+            inheritValues={settingsLlamaCpp}
+            applySettings
           />
         )}
 

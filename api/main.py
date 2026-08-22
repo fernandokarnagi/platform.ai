@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.logger import configure_logging
 from api.database import connect_to_mongo, close_mongo_connection
-from api.routes import clusters_router, downloads_router, engines_router, nodes_router
+from api.routes import clusters_router, downloads_router, engines_router, library_router, nodes_router, settings_router
 from api.services.download_watcher import watch_downloads
 
 configure_logging()
@@ -40,6 +40,8 @@ app.include_router(clusters_router)
 app.include_router(downloads_router)
 app.include_router(engines_router)
 app.include_router(nodes_router)
+app.include_router(library_router)
+app.include_router(settings_router)
 
 
 @app.get("/health")

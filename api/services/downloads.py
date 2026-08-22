@@ -2,6 +2,7 @@ from datetime import datetime
 
 from api.engines import get_engine
 from api.logger import get_logger
+from api.services import library as library_mod
 from api.services import ssh as ssh_mod
 
 logger = get_logger(__name__)
@@ -28,7 +29,9 @@ async def sync_job(db, doc: dict) -> dict:
     """Probe a running download on the node and persist bytes/status."""
     if doc.get("status") not in ("queued", "running"):
         return doc
-    node = await db.nodes.find_one({"_id": doc["nodeId"]}) if doc.get("nodeId") else None
+    if doc.get("jobType") == "copy":
+        return doc
+    node = await library_mod.runner_for_job(db, doc)
     now = datetime.utcnow()
     if not node:
         await db.downloads.update_one(
@@ -38,7 +41,7 @@ async def sync_job(db, doc: dict) -> dict:
         doc.update({"status": "failed", "detail": "Node is gone", "updatedAt": now, "finishedAt": now})
         return doc
     try:
-        engine = get_engine(node.get("engine") or doc.get("engine"))
+        engine = get_engine(node.get("engine") or doc.get("engine") or doc.get("kind"))
         result = await ssh_mod.run_command(
             node,
             engine.download_progress_command(doc["modelDir"], doc["filename"], str(doc["_id"])),

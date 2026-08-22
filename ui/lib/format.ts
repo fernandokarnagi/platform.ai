@@ -39,6 +39,19 @@ export function formatDateTime(iso: string | null | undefined, options?: { secon
   return formatInSgt(date, Boolean(options?.seconds));
 }
 
+export function formatBytes(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n) || n < 0) return '—';
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+export function formatPercent(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  return `${n.toFixed(1)}%`;
+}
+
 /** File mtime from `stat` is already a wall clock on the node (usually SGT). */
 export function formatFileTime(raw: string | null | undefined): string {
   if (!raw) return '—';

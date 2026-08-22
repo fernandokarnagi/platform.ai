@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chatModelOptions, isModelServed, pickChatModel } from './chatModel.ts';
+import {
+  chatModelOptions,
+  isModelServed,
+  localServedModels,
+  modelsMatch,
+  pickChatModel,
+} from './chatModel.ts';
 
 test('pickChatModel prefers selected folder name over the current served path', () => {
   const served = [
@@ -37,4 +43,30 @@ test('isModelServed matches a snapshot folder to the full served path', () => {
     isModelServed(['/mnt/data/vllmmodels/LiquidAI--LFM2.5-2.6B'], 'Qwen--Qwen3.8-27B'),
     false,
   );
+});
+
+test('modelsMatch treats a GGUF filename as the served id', () => {
+  assert.equal(modelsMatch('Qwen3.5-4B-UD-Q4_K_XL', 'Qwen3.5-4B-UD-Q4_K_XL.gguf'), true);
+  assert.equal(modelsMatch('Qwen3.5-4B-UD-Q4_K_XL.gguf', 'Qwen3.5-4B-UD-Q4_K_XL'), true);
+});
+
+test('localServedModels drops OpenAI ids that are not in the model dir', () => {
+  assert.deepEqual(
+    localServedModels(
+      ['LiquidAI/LFM2.5-2.6B-GGUF', 'Qwen3.5-4B-UD-Q4_K_XL', 'Qwen3.5-35B-A3B-UD-Q2_K_XL'],
+      ['Qwen3.5-4B-UD-Q4_K_XL.gguf'],
+    ),
+    ['Qwen3.5-4B-UD-Q4_K_XL'],
+  );
+});
+
+test('pickChatModel without a preferred id drops an unserved current model', () => {
+  assert.equal(
+    pickChatModel(['Qwen3.5-4B-UD-Q4_K_XL'], 'Qwen3.5-35B-A3B-UD-Q2_K_XL'),
+    'Qwen3.5-4B-UD-Q4_K_XL',
+  );
+});
+
+test('chatModelOptions keeps only served ids when selected is omitted', () => {
+  assert.deepEqual(chatModelOptions(['Qwen3.5-4B-UD-Q4_K_XL'], undefined), ['Qwen3.5-4B-UD-Q4_K_XL']);
 });

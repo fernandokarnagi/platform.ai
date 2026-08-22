@@ -2,7 +2,8 @@ export function modelBasename(id: string): string {
   const trimmed = (id || '').trim().replace(/\/+$/, '');
   if (!trimmed) return '';
   const slash = trimmed.lastIndexOf('/');
-  return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+  const name = slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+  return name.toLowerCase().endsWith('.gguf') ? name.slice(0, -5) : name;
 }
 
 export function modelsMatch(left: string, right: string): boolean {
@@ -11,6 +12,10 @@ export function modelsMatch(left: string, right: string): boolean {
   const a = modelBasename(left);
   const b = modelBasename(right);
   return Boolean(a) && a === b;
+}
+
+export function localServedModels(served: string[], diskNames: string[]): string[] {
+  return served.filter((id) => diskNames.some((name) => modelsMatch(id, name)));
 }
 
 export function pickChatModel(served: string[], current: string, preferred?: string): string {

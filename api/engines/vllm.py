@@ -1,6 +1,7 @@
 import shlex
 
 from api.engines.llama_cpp import ForbiddenExtraFlagsError, LlamaCppEngine
+from api.helpers import merge_vllm_params
 
 FORBIDDEN_EXTRA = {"--host", "--port", "--model", "-m"}
 
@@ -61,7 +62,7 @@ class VllmEngine:
 
     @staticmethod
     def build_argv(node: dict, model_dir_expanded: str) -> list[str]:
-        params = node.get("serverParams") or {}
+        params = merge_vllm_params(node.get("serverParams") or {})
         argv = [
             "serve",
             _model_arg(node, model_dir_expanded),

@@ -1,12 +1,12 @@
 ---
 title: Generated file map
 tags: [generated]
-updated: 2026-08-18
+updated: 2026-08-22
 ---
 
 # Generated file map
 
-Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
+Written by `scripts/update-brain.sh` on 2026-08-22. Do not edit.
 
 - `AGENTS.md`
 - `CLAUDE.md`
@@ -40,25 +40,38 @@ Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
 - `api/routes/clusters.py`
 - `api/routes/downloads.py`
 - `api/routes/engines.py`
+- `api/routes/library.py`
 - `api/routes/nodes.py`
+- `api/routes/settings.py`
 - `api/services/__init__.py`
 - `api/services/download_watcher.py`
 - `api/services/downloads.py`
+- `api/services/dry_run.py`
 - `api/services/engine.py`
+- `api/services/library.py`
+- `api/services/metrics.py`
 - `api/services/openai_proxy.py`
+- `api/services/request_log.py`
 - `api/services/ssh.py`
 - `api/services/status_cache.py`
 - `api/tests/__init__.py`
 - `api/tests/conftest.py`
 - `api/tests/test_clusters.py`
 - `api/tests/test_download_progress.py`
+- `api/tests/test_dry_run.py`
 - `api/tests/test_engine_lifecycle.py`
 - `api/tests/test_health.py`
 - `api/tests/test_helpers.py`
+- `api/tests/test_hf_token.py`
+- `api/tests/test_library.py`
+- `api/tests/test_library_api.py`
 - `api/tests/test_llama_cpp_argv.py`
+- `api/tests/test_metrics.py`
 - `api/tests/test_models_ops.py`
 - `api/tests/test_nodes.py`
 - `api/tests/test_openai_proxy.py`
+- `api/tests/test_request_log.py`
+- `api/tests/test_settings.py`
 - `api/tests/test_ssh.py`
 - `api/tests/test_status_cache.py`
 - `api/tests/test_vllm_argv.py`
@@ -69,10 +82,15 @@ Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
 - `scripts/update-brain.sh`
 - `start.sh`
 - `stop.sh`
+- `ui/components/CollapsibleCard.tsx`
+- `ui/components/DryRunModal.tsx`
 - `ui/components/EngineParamsModal.tsx`
 - `ui/components/ErrorBanner.tsx`
 - `ui/components/InfoTip.tsx`
+- `ui/components/InheritPill.tsx`
 - `ui/components/ModelRadios.tsx`
+- `ui/components/RequestLogPanel.tsx`
+- `ui/components/ServerMetricsPanel.tsx`
 - `ui/components/ServerParamsFields.tsx`
 - `ui/components/SetupInstructions.tsx`
 - `ui/components/Sidebar.tsx`
@@ -85,8 +103,12 @@ Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
 - `ui/lib/chatModel.test.ts`
 - `ui/lib/chatModel.ts`
 - `ui/lib/engine.ts`
+- `ui/lib/engineParams.test.ts`
+- `ui/lib/engineParams.ts`
 - `ui/lib/errors.ts`
 - `ui/lib/format.ts`
+- `ui/lib/inherit.test.ts`
+- `ui/lib/inherit.ts`
 - `ui/routes/index.tsx`
 - `ui/screens/App.tsx`
 - `ui/screens/ClusterDetailScreen.tsx`
@@ -94,9 +116,12 @@ Written by `scripts/update-brain.sh` on 2026-08-18. Do not edit.
 - `ui/screens/DownloadsScreen.tsx`
 - `ui/screens/NodeDetailScreen.tsx`
 - `ui/screens/NodeFormScreen.tsx`
+- `ui/screens/SettingsScreen.tsx`
 - `ui/services/clusterService.ts`
 - `ui/services/downloadService.ts`
+- `ui/services/libraryService.ts`
 - `ui/services/nodeService.ts`
+- `ui/services/settingsService.ts`
 - `ui/types.ts`
 - `ui/vite-env.d.ts`
 - `ui/vite.config.ts`

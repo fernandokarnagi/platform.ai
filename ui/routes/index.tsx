@@ -5,6 +5,7 @@ import ClustersScreen from '@screens/ClustersScreen';
 import DownloadsScreen from '@screens/DownloadsScreen';
 import NodeDetailScreen from '@screens/NodeDetailScreen';
 import NodeFormScreen from '@screens/NodeFormScreen';
+import SettingsScreen from '@screens/SettingsScreen';
 
 export default function AppRoutes() {
   return (
@@ -17,6 +18,7 @@ export default function AppRoutes() {
           <Route path="/nodes/:id" element={<NodeDetailScreen />} />
           <Route path="/nodes/:id/edit" element={<NodeFormScreen />} />
           <Route path="/downloads" element={<DownloadsScreen />} />
+          <Route path="/settings" element={<SettingsScreen />} />
         </Route>
       </Routes>
     </BrowserRouter>

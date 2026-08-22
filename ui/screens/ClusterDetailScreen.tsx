@@ -5,8 +5,9 @@ import ErrorBanner from '@components/ErrorBanner';
 import SuccessModal from '@components/SuccessModal';
 import ModelRadios from '@components/ModelRadios';
 import StatusIcon from '@components/StatusIcon';
+import { localServedModels } from '@/lib/chatModel';
 import { usefulDetail } from '@/lib/errors';
-import { engineLabel } from '@/lib/engine';
+import { engineLabel, isVllm } from '@/lib/engine';
 import { useClusters } from '@contexts/ClusterContext';
 import { clusterService } from '@services/clusterService';
 import { nodeService } from '@services/nodeService';
@@ -82,6 +83,7 @@ export default function ClusterDetailScreen() {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
+  const [editHfToken, setEditHfToken] = useState('');
   const [saving, setSaving] = useState(false);
   const [paramsNode, setParamsNode] = useState<Node | null>(null);
 
@@ -182,6 +184,7 @@ export default function ClusterDetailScreen() {
     if (!cluster) return;
     setEditName(cluster.name);
     setEditDescription(cluster.description ?? '');
+    setEditHfToken(cluster.hfToken ?? '');
     setEditing(true);
     setError(null);
     setNotice(null);
@@ -201,6 +204,7 @@ export default function ClusterDetailScreen() {
       const updated = await clusterService.update(id, {
         name: trimmed,
         description: editDescription.trim(),
+        hfToken: editHfToken.trim(),
       });
       setCluster(updated);
       setEditing(false);
@@ -315,12 +319,34 @@ export default function ClusterDetailScreen() {
             {!loading
               ? nodes.map((node) => {
                   const probe = probes[node.id];
-                  const models = probe?.status.models ?? node.statusCache?.models ?? node.lastOpenAICheck?.models ?? [];
+                  const live = probe?.status.models ?? node.statusCache?.models ?? node.lastOpenAICheck?.models ?? [];
+                  const disk = node.modelsCache?.items;
+                  const models =
+                    isVllm(node.engine) || !disk
+                      ? live
+                      : localServedModels(
+                          live,
+                          disk.map((item) => item.name),
+                        );
                   return (
                     <tr key={node.id} className="clickable" onClick={() => navigate(`/nodes/${node.id}`)}>
                       <td>{node.name}</td>
-                      <td className="muted">
-                        {node.nodeType === 'local' ? 'localhost' : `${node.host}:${node.sshPort}`}
+                      <td>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="muted">
+                            {node.nodeType === 'local' ? 'localhost' : `${node.host}:${node.sshPort}`}
+                          </span>
+                          <button
+                            type="button"
+                            className="toggle stat-check-btn"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              navigate(`/nodes/${node.id}?logs=1`);
+                            }}
+                          >
+                            Metrics
+                          </button>
+                        </span>
                       </td>
                       <td>
                         {probe ? <StatusIcon kind={probe.status.ssh === 'up' ? 'up' : 'down'} /> : <span className="muted">…</span>}
@@ -390,6 +416,17 @@ export default function ClusterDetailScreen() {
                 className="field-input"
                 placeholder="optional"
                 rows={4}
+              />
+            </label>
+            <label>
+              <span className="field-label">Hugging Face token</span>
+              <input
+                type="password"
+                value={editHfToken}
+                onChange={(event) => setEditHfToken(event.target.value)}
+                className="field-input"
+                placeholder="empty — uses Settings token"
+                autoComplete="off"
               />
             </label>
             <div className="modal-actions">

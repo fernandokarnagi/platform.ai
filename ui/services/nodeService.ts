@@ -3,10 +3,12 @@ import type {
   ChatIn,
   DownloadModelIn,
   DownloadJob,
+  DryRunResult,
   EngineLogs,
   HfRepoFiles,
   EngineStatus,
   Node,
+  NodeMetrics,
   NodeIn,
   NodeStatus,
   NodeUpdate,
@@ -14,6 +16,7 @@ import type {
   PreviewIn,
   PreviewOut,
   RemoteModel,
+  RequestLogEntry,
   TestSshResult,
 } from '@/types';
 
@@ -104,6 +107,10 @@ export const nodeService = {
     return api<TestSshResult>(`/nodes/${id}/test-ssh`, { method: 'POST' });
   },
 
+  metrics(id: string): Promise<NodeMetrics> {
+    return api<NodeMetrics>(`/nodes/${id}/metrics`);
+  },
+
   status(id: string, refresh = false, check?: 'ssh' | 'engine' | 'openai'): Promise<NodeStatus> {
     const query = new URLSearchParams();
     if (refresh) query.set('refresh', 'true');
@@ -121,6 +128,17 @@ export const nodeService = {
       method: 'POST',
       body: JSON.stringify(modelFilename ? { modelFilename } : {}),
     });
+  },
+
+  dryRun(id: string, modelFilename?: string): Promise<DryRunResult> {
+    return api<DryRunResult>(`/nodes/${id}/engine/dry-run`, {
+      method: 'POST',
+      body: JSON.stringify(modelFilename ? { modelFilename } : {}),
+    });
+  },
+
+  requests(id: string): Promise<RequestLogEntry[]> {
+    return api<RequestLogEntry[]>(`/nodes/${id}/requests`);
   },
 
   stop(id: string): Promise<EngineStatus> {
@@ -147,6 +165,13 @@ export const nodeService = {
     return api<DownloadJob>(`/nodes/${id}/models/download`, {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  },
+
+  copyFromLibrary(id: string, kind: string, filename: string): Promise<DownloadJob> {
+    return api<DownloadJob>(`/nodes/${id}/models/copy`, {
+      method: 'POST',
+      body: JSON.stringify({ kind, filename }),
     });
   },
 

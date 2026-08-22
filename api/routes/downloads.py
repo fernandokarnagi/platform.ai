@@ -2,7 +2,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from api.database import get_database
 from api.engines import get_engine, is_vllm_engine
-from api.helpers import download_helper, parse_object_id
+from api.helpers import SETTINGS_DOC_ID, download_helper, parse_object_id, resolve_hf_token
+from api.services import library as library_mod
 from api.services import ssh as ssh_mod
 
 router = APIRouter(tags=["downloads"])
@@ -34,10 +35,10 @@ async def cancel_download(job_id: str):
         raise HTTPException(status_code=404, detail="Not found")
     if doc.get("status") not in ("queued", "running"):
         raise HTTPException(status_code=409, detail="Download is not running")
-    node = await db.nodes.find_one({"_id": doc["nodeId"]}) if doc.get("nodeId") else None
-    if node:
+    node = await library_mod.runner_for_job(db, doc)
+    if node and doc.get("jobType") != "copy":
         try:
-            engine = get_engine(node.get("engine") or doc.get("engine"))
+            engine = get_engine(node.get("engine") or doc.get("engine") or doc.get("kind"))
             await ssh_mod.run_command(
                 node,
                 engine.cancel_download_command(doc["modelDir"], doc["filename"], str(doc["_id"])),
@@ -61,7 +62,7 @@ async def retry_download(job_id: str):
         raise HTTPException(status_code=404, detail="Not found")
     if doc.get("status") not in ("failed", "cancelled"):
         raise HTTPException(status_code=409, detail="Download cannot be retried")
-    node = await db.nodes.find_one({"_id": doc["nodeId"]}) if doc.get("nodeId") else None
+    node = await library_mod.runner_for_job(db, doc)
     now = datetime.utcnow()
     if not node:
         await db.downloads.update_one(
@@ -69,8 +70,12 @@ async def retry_download(job_id: str):
             {"$set": {"status": "failed", "detail": "Node is gone", "updatedAt": now, "finishedAt": now}},
         )
         raise HTTPException(status_code=502, detail="Node is gone")
-    token = (node.get("hfToken") or "") if doc.get("source") == "huggingface" else ""
-    engine = get_engine(node.get("engine") or doc.get("engine"))
+    if doc.get("jobType") == "copy":
+        raise HTTPException(status_code=409, detail="Copy jobs cannot be retried — copy again from the node")
+    cluster = await db.clusters.find_one({"_id": node.get("clusterId")}) if node.get("clusterId") is not None else None
+    settings = await db.settings.find_one({"_id": SETTINGS_DOC_ID})
+    token = resolve_hf_token(node, cluster, settings=settings) if doc.get("source") == "huggingface" else ""
+    engine = get_engine(node.get("engine") or doc.get("engine") or doc.get("kind"))
     if is_vllm_engine(engine):
         try:
             await ssh_mod.run_command(
@@ -118,7 +123,8 @@ async def retry_download(job_id: str):
         {"_id": doc["_id"]},
         {"$set": {"status": "running", "detail": "", "updatedAt": datetime.utcnow(), "finishedAt": None}},
     )
-    await db.nodes.update_one({"_id": node["_id"]}, {"$unset": {"modelsCache": ""}})
+    if node.get("_id"):
+        await db.nodes.update_one({"_id": node["_id"]}, {"$unset": {"modelsCache": ""}})
     updated = await db.downloads.find_one({"_id": doc["_id"]})
     return download_helper(updated)
 
@@ -129,9 +135,9 @@ async def delete_download(job_id: str):
     doc = await db.downloads.find_one({"_id": parse_object_id(job_id)})
     if not doc:
         raise HTTPException(status_code=404, detail="Not found")
-    node = await db.nodes.find_one({"_id": doc["nodeId"]}) if doc.get("nodeId") else None
-    engine = get_engine((node or {}).get("engine") or doc.get("engine"))
-    if node and doc.get("status") in ("queued", "running"):
+    node = await library_mod.runner_for_job(db, doc)
+    engine = get_engine((node or {}).get("engine") or doc.get("engine") or doc.get("kind") or "llama.cpp")
+    if node and doc.get("jobType") != "copy" and doc.get("status") in ("queued", "running"):
         try:
             await ssh_mod.run_command(
                 node,
@@ -139,7 +145,7 @@ async def delete_download(job_id: str):
             )
         except ssh_mod.SshError:
             pass
-    if node:
+    if node and doc.get("jobType") != "copy":
         try:
             await ssh_mod.run_command(node, engine.delete_job_command(str(doc["_id"])))
         except ssh_mod.SshError:

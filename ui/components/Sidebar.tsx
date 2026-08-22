@@ -9,6 +9,7 @@ export default function Sidebar() {
     <header className="topbar">
       <nav className="topnav">
         <NavLink to="/" className="brand">
+          <img src="/favicon.svg" alt="" width="18" height="18" />
           Platform.AI
         </NavLink>
         <NavLink to="/" className={clustersActive ? 'navlink current' : 'navlink'}>
@@ -16,6 +17,9 @@ export default function Sidebar() {
         </NavLink>
         <NavLink to="/downloads" className={({ isActive }) => (isActive ? 'navlink current' : 'navlink')}>
           Downloads
+        </NavLink>
+        <NavLink to="/settings" className={({ isActive }) => (isActive ? 'navlink current' : 'navlink')}>
+          Settings
         </NavLink>
       </nav>
       <span className="spacer" />

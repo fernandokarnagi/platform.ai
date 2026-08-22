@@ -1,7 +1,7 @@
 ---
 title: vLLM engine
 tags: [vllm, engine]
-updated: 2026-08-18
+updated: 2026-08-22
 ---
 
 # vLLM engine
@@ -50,9 +50,11 @@ Metal Stop: kill the pid in `~/.platformai/vllm.pid`
 
 Owned by the form — extraFlags may **not** contain `--host`, `--port`, `--model`, `-m` (400).
 
-Preview: `POST /engines/vllm/preview`.
+Preview: `POST /engines/vllm/preview`. Start, dry-run, and preview merge Settings `vllm` into empty node fields first.
 
 Sampling stays on Chat.
+
+Long-context snapshots (Qwen 256k, etc.) use the model default `max_model_len` when that field is empty. After weights load, leftover KV cache is often too small and EngineCore dies. Set **Max model length** on the node (32768 is a safe start; the log also prints an estimated max). `ctc-vllm` is capped at 32768 for `Qwen--Qwen3.8-27B`.
 
 ## Models
 

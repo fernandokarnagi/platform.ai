@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import ErrorBanner from '@components/ErrorBanner';
 import { downloadService } from '@services/downloadService';
+import { libraryService } from '@services/libraryService';
 import { formatDateTime } from '@/lib/format';
-import type { DownloadJob } from '@/types';
+import type { DownloadJob, HfRepoFile, LibraryList } from '@/types';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -18,7 +19,7 @@ function formatBytes(n: number): string {
 }
 
 function statusLabel(job: DownloadJob): string {
-  if (job.status === 'running') return 'Downloading';
+  if (job.status === 'running') return job.source === 'library' ? 'Copying' : 'Downloading';
   if (job.status === 'queued') return 'Queued';
   if (job.status === 'done') return 'Done';
   if (job.status === 'cancelled') return 'Cancelled';
@@ -32,10 +33,20 @@ export default function DownloadsScreen() {
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [library, setLibrary] = useState<LibraryList | null>(null);
+  const [fetchKind, setFetchKind] = useState<'llama.cpp' | 'vllm'>('llama.cpp');
+  const [fetchSource, setFetchSource] = useState<'huggingface' | 'url'>('huggingface');
+  const [fetchRepo, setFetchRepo] = useState('');
+  const [fetchFilename, setFetchFilename] = useState('');
+  const [fetchUrl, setFetchUrl] = useState('');
+  const [hfFiles, setHfFiles] = useState<HfRepoFile[]>([]);
+  const [fetching, setFetching] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      setJobs(await downloadService.list());
+      const [jobList, catalog] = await Promise.all([downloadService.list(), libraryService.list()]);
+      setJobs(jobList);
+      setLibrary(catalog);
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
@@ -83,6 +94,57 @@ export default function DownloadsScreen() {
     }
   }
 
+  useEffect(() => {
+    if (fetchSource !== 'huggingface') return;
+    const repo = fetchRepo.trim();
+    if (!repo.includes('/')) {
+      setHfFiles([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void libraryService
+        .listHf(repo, fetchKind)
+        .then((listed) => {
+          if (cancelled) return;
+          setHfFiles(listed.files);
+          setFetchFilename((current) => {
+            if (current && listed.files.some((item) => item.name === current || item.name.endsWith(`/${current}`))) {
+              return current;
+            }
+            return listed.files[0]?.name ?? '';
+          });
+        })
+        .catch(() => {
+          if (!cancelled) setHfFiles([]);
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [fetchSource, fetchRepo, fetchKind]);
+
+  async function handleFetch(event: FormEvent) {
+    event.preventDefault();
+    setFetching(true);
+    setError(null);
+    try {
+      await libraryService.download(
+        fetchSource === 'huggingface'
+          ? { kind: fetchKind, source: 'huggingface', repo: fetchRepo.trim(), filename: fetchFilename.trim() }
+          : { kind: fetchKind, source: 'url', url: fetchUrl.trim(), filename: fetchFilename.trim() || undefined },
+      );
+      setFetchRepo('');
+      setFetchUrl('');
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setFetching(false);
+    }
+  }
+
   async function handleRetry(job: DownloadJob) {
     setRetrying(job.id);
     try {
@@ -100,7 +162,7 @@ export default function DownloadsScreen() {
       <div className="page-head">
         <div>
           <h1>Downloads</h1>
-          <p className="page-sub">Background model downloads on your nodes</p>
+          <p className="page-sub">Fetch into the library, then copy onto nodes</p>
         </div>
         <button type="button" className="toggle" onClick={() => void load()}>
           Refresh
@@ -108,10 +170,136 @@ export default function DownloadsScreen() {
       </div>
 
       <p className="note">
-        After a download finishes, restart the engine on that node if the new model does not appear in Served models.
+        Library path is set in Settings. After a copy finishes, restart the engine on that node if the model does not
+        appear in Served models.
       </p>
 
       {error ? <ErrorBanner message={error} /> : null}
+
+      <section className="card space-y-4">
+        <div className="card-head">
+          <h2 className="card-title">Library</h2>
+          <span className="muted">{library?.libraryDir || '…'}</span>
+        </div>
+        <form onSubmit={(event) => void handleFetch(event)} className="grid gap-4 sm:grid-cols-2">
+          <label>
+            <span className="field-label">Kind</span>
+            <select
+              value={fetchKind}
+              onChange={(event) => setFetchKind(event.target.value as 'llama.cpp' | 'vllm')}
+              className="field-input"
+            >
+              <option value="llama.cpp">llama.cpp (GGUF)</option>
+              <option value="vllm">vLLM (snapshot)</option>
+            </select>
+          </label>
+          <label>
+            <span className="field-label">Source</span>
+            <select
+              value={fetchSource}
+              onChange={(event) => setFetchSource(event.target.value as 'huggingface' | 'url')}
+              className="field-input"
+            >
+              <option value="huggingface">Hugging Face</option>
+              <option value="url">URL</option>
+            </select>
+          </label>
+          {fetchSource === 'huggingface' ? (
+            <>
+              <label className="sm:col-span-2">
+                <span className="field-label">Repo</span>
+                <input
+                  value={fetchRepo}
+                  onChange={(event) => setFetchRepo(event.target.value)}
+                  className="field-input"
+                  placeholder="org/model"
+                />
+              </label>
+              {fetchKind === 'llama.cpp' ? (
+                <label className="sm:col-span-2">
+                  <span className="field-label">File</span>
+                  {hfFiles.length ? (
+                    <select
+                      value={fetchFilename}
+                      onChange={(event) => setFetchFilename(event.target.value)}
+                      className="field-input"
+                    >
+                      {hfFiles.map((file) => (
+                        <option key={file.name} value={file.name}>
+                          {file.name.split('/').pop()} ({formatBytes(file.sizeBytes)})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={fetchFilename}
+                      onChange={(event) => setFetchFilename(event.target.value)}
+                      className="field-input"
+                      placeholder="model.gguf"
+                    />
+                  )}
+                </label>
+              ) : (
+                <p className="muted sm:col-span-2">Fetches the full snapshot into vllm/org--model.</p>
+              )}
+            </>
+          ) : (
+            <>
+              <label className="sm:col-span-2">
+                <span className="field-label">URL</span>
+                <input
+                  value={fetchUrl}
+                  onChange={(event) => setFetchUrl(event.target.value)}
+                  className="field-input"
+                  placeholder="https://…/model.gguf"
+                />
+              </label>
+              <label className="sm:col-span-2">
+                <span className="field-label">Filename</span>
+                <input
+                  value={fetchFilename}
+                  onChange={(event) => setFetchFilename(event.target.value)}
+                  className="field-input"
+                  placeholder="optional"
+                />
+              </label>
+            </>
+          )}
+          <div className="sm:col-span-2">
+            <button type="submit" disabled={fetching} className="toggle accent">
+              {fetching ? 'Fetching…' : 'Fetch into library'}
+            </button>
+          </div>
+        </form>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Kind</th>
+                <th>Name</th>
+                <th>Size</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(library?.items || []).length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="empty">
+                    Empty library. Fetch a GGUF or vLLM snapshot above.
+                  </td>
+                </tr>
+              ) : (
+                (library?.items || []).map((item) => (
+                  <tr key={`${item.kind}-${item.name}`}>
+                    <td>{item.kind}</td>
+                    <td>{item.name}</td>
+                    <td className="muted">{formatBytes(item.sizeBytes)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <div className="table-wrap">
         <table className="data-table">

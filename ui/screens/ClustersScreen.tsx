@@ -42,6 +42,7 @@ export default function ClustersScreen() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [hfToken, setHfToken] = useState('');
   const [engine, setEngine] = useState<EngineType>('llama.cpp');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -49,6 +50,7 @@ export default function ClustersScreen() {
   function openCreate() {
     setName('');
     setDescription('');
+    setHfToken('');
     setEngine('llama.cpp');
     setCreating(true);
     setError(null);
@@ -68,6 +70,7 @@ export default function ClustersScreen() {
         name: trimmed,
         engine,
         description: description.trim(),
+        hfToken: hfToken.trim(),
       });
       setCreating(false);
       setError(null);
@@ -177,6 +180,17 @@ export default function ClustersScreen() {
                 <option value="vllm">vLLM AMD ROCm Linux</option>
                 <option value="vllm-metal">vLLM Mac Metal</option>
               </select>
+            </label>
+            <label>
+              <span className="field-label">Hugging Face token</span>
+              <input
+                type="password"
+                value={hfToken}
+                onChange={(event) => setHfToken(event.target.value)}
+                className="field-input"
+                placeholder="empty — uses Settings token"
+                autoComplete="off"
+              />
             </label>
             <div className="modal-actions">
               <button type="button" onClick={() => setCreating(false)} className="toggle">

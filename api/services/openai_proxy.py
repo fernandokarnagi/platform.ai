@@ -32,5 +32,8 @@ async def chat_completions(base_url: str, api_key: str, payload: dict) -> dict:
             )
             response.raise_for_status()
             return response.json()
+    except httpx.HTTPStatusError as exc:
+        body = (exc.response.text or "").strip()[:2000]
+        raise OpenAIProxyError(body or str(exc)) from exc
     except Exception as exc:
         raise OpenAIProxyError(str(exc)) from exc

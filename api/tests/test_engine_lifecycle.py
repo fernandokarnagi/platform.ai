@@ -434,6 +434,46 @@ async def test_vllm_start_dies_reports_no_gpu(app, monkeypatch):
         assert "0 GPUs" in response.json()["detail"]
 
 
+@pytest.mark.asyncio
+async def test_vllm_start_dies_reports_kv_cache_too_small(app, monkeypatch):
+    checks = {"alive": 0}
+
+    async def fake_run(node, command, timeout=30.0):
+        if _expand_ok(command):
+            return FakeResult("/models\n")
+        if "command -v docker" in command:
+            return FakeResult("/usr/bin/docker\n")
+        if "docker run" in command:
+            checks["started"] = True
+            return FakeResult("aabbccddeeff\n")
+        if "State.Running" in command:
+            if not checks.get("started"):
+                return FakeResult("false\n")
+            checks["alive"] += 1
+            return FakeResult("true\nalive\n" if checks["alive"] == 1 else "false\n")
+        if "docker logs" in command:
+            return FakeResult(
+                "ValueError: To serve at least one request with the model's max seq len "
+                "(262144), (16.17 GiB KV cache is needed, which is larger than the "
+                "available KV cache memory (3.18 GiB). Based on the available memory, "
+                "the estimated maximum model length is 49392.\n"
+            )
+        return FakeResult("")
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(ssh_mod, "run_command", fake_run)
+    monkeypatch.setattr("api.routes.nodes.asyncio.sleep", no_sleep)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        node = await _seed_vllm(client)
+        response = await client.post(f"/nodes/{node['id']}/engine/start", json={})
+        assert response.status_code == 502
+        detail = response.json()["detail"]
+        assert "max model length" in detail.lower()
+        assert "49392" in detail
+
+
 async def _seed_vllm_metal(client):
     cluster = (await client.post("/clusters", json={"name": "mac-metal", "engine": "vllm-metal"})).json()
     node = (

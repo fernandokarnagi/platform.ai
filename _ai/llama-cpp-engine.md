@@ -1,7 +1,7 @@
 ---
 title: llama.cpp engine
 tags: [llama-cpp, engine]
-updated: 2026-08-17
+updated: 2026-08-22
 ---
 
 # llama.cpp engine
@@ -18,7 +18,7 @@ If `llamaServerPath` is set on the node, Start uses that file (`-x`). Otherwise 
 
 Always emitted: `--ctx-size` (even 0), `--n-gpu-layers`, `--flash-attn`, `--parallel`, `--kv-offload` / `--no-kv-offload`, `--fit`.
 
-Always emitted: `--models-dir` (the node model dir), `--host`, `--port`. No `-m` / `$MODEL`. llama-server router mode loads GGUFs from that directory.
+Always emitted: `--models-dir` (the node model dir), `--host`, `--port`. No `-m` / `$MODEL`. llama-server router mode loads GGUFs from that directory. `/v1/models` can also list cached presets that are not in that dir; the UI Chat and Served lists keep only ids that match a local GGUF.
 
 `--jinja` is emitted before `--chat-template`. Custom Jinja content is rejected unless `--jinja` comes first. Empty `chatTemplate` uses the model's stored template.
 
@@ -35,7 +35,7 @@ Sampling (`temperature`, `top-p`) is Chat, not launch.
 | PID | `~/.platformai/llama-server.pid` |
 | Log | `~/.platformai/llama-server.log` |
 
-Start writes `lastStart` only after a live pid (`kill -0`). Restart rebuilds argv from **current** `serverParams` + `--models-dir`.
+Start writes `lastStart` only after a live pid (`kill -0`). Restart rebuilds argv from **current** `serverParams` merged with Settings `llamaCpp`, then `--models-dir`. Empty node fields inherit Settings, then engine defaults.
 
 ## Related
 

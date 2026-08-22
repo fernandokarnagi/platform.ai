@@ -44,16 +44,16 @@ class CacheType(str, Enum):
 
 
 class ServerParams(BaseModel):
-    """llama-server launch parameters. Unset optional fields are omitted from argv."""
-    ctxSize: int = 0
-    gpuLayers: Union[str, int] = "auto"
-    flashAttn: FlashAttn = FlashAttn.AUTO
+    """llama-server launch parameters. Unset optional fields inherit Settings, then engine defaults."""
+    ctxSize: Optional[int] = None
+    gpuLayers: Optional[Union[str, int]] = None
+    flashAttn: Optional[FlashAttn] = None
     threads: Optional[int] = None
-    parallel: int = 1
+    parallel: Optional[int] = None
     batchSize: Optional[int] = None
     ubatchSize: Optional[int] = None
-    kvOffload: bool = True
-    fit: FitMode = FitMode.ON
+    kvOffload: Optional[bool] = None
+    fit: Optional[FitMode] = None
     cacheTypeK: Optional[CacheType] = None
     cacheTypeV: Optional[CacheType] = None
     nPredict: Optional[int] = None
@@ -71,8 +71,8 @@ class ServerParams(BaseModel):
     metrics: Optional[bool] = None
     alias: Optional[str] = None
     extraFlags: str = ""
-    tensorParallelSize: int = 1
-    gpuMemoryUtilization: float = 0.9
+    tensorParallelSize: Optional[int] = None
+    gpuMemoryUtilization: Optional[float] = None
     maxModelLen: Optional[int] = None
     dtype: Optional[str] = None
     quantization: Optional[str] = None
@@ -90,6 +90,7 @@ class ClusterIn(BaseModel):
     name: str
     engine: EngineType = EngineType.LLAMA_CPP
     description: str = ""
+    hfToken: str = ""
 
 
 class ClusterUpdate(BaseModel):
@@ -97,6 +98,62 @@ class ClusterUpdate(BaseModel):
     name: Optional[str] = None
     engine: Optional[EngineType] = None
     description: Optional[str] = None
+    hfToken: Optional[str] = None
+
+
+class LlamaCppSettings(BaseModel):
+    """Global llama.cpp launch params. Unset fields fall through to engine defaults."""
+    ctxSize: Optional[int] = None
+    gpuLayers: Optional[Union[str, int]] = None
+    flashAttn: Optional[FlashAttn] = None
+    threads: Optional[int] = None
+    parallel: Optional[int] = None
+    batchSize: Optional[int] = None
+    ubatchSize: Optional[int] = None
+    kvOffload: Optional[bool] = None
+    fit: Optional[FitMode] = None
+    cacheTypeK: Optional[CacheType] = None
+    cacheTypeV: Optional[CacheType] = None
+    nPredict: Optional[int] = None
+    keep: Optional[int] = None
+    threadsBatch: Optional[int] = None
+    splitMode: Optional[str] = None
+    mainGpu: Optional[int] = None
+    tensorSplit: Optional[str] = None
+    device: Optional[str] = None
+    cpuMoe: Optional[bool] = None
+    nCpuMoe: Optional[int] = None
+    loadMode: Optional[str] = None
+    jinja: Optional[bool] = None
+    chatTemplate: Optional[str] = None
+    metrics: Optional[bool] = None
+    alias: Optional[str] = None
+    extraFlags: Optional[str] = None
+
+
+class VllmSettings(BaseModel):
+    """Global vLLM launch params (ROCm Docker and Mac Metal). Unset fields fall through to engine defaults."""
+    tensorParallelSize: Optional[int] = None
+    gpuMemoryUtilization: Optional[float] = None
+    maxModelLen: Optional[int] = None
+    dtype: Optional[str] = None
+    quantization: Optional[str] = None
+    maxNumSeqs: Optional[int] = None
+    swapSpace: Optional[int] = None
+    kvCacheDtype: Optional[str] = None
+    servedModelName: Optional[str] = None
+    trustRemoteCode: Optional[bool] = None
+    enforceEager: Optional[bool] = None
+    enablePrefixCaching: Optional[bool] = None
+    extraFlags: Optional[str] = None
+
+
+class SettingsUpdate(BaseModel):
+    """Payload to update the singleton Settings document."""
+    hfToken: Optional[str] = None
+    libraryDir: Optional[str] = None
+    llamaCpp: Optional[LlamaCppSettings] = None
+    vllm: Optional[VllmSettings] = None
 
 
 class NodeIn(BaseModel):
@@ -157,6 +214,15 @@ class DownloadModelIn(BaseModel):
     hfToken: Optional[str] = None
 
 
+class LibraryDownloadIn(DownloadModelIn):
+    kind: str
+
+
+class CopyLibraryIn(BaseModel):
+    kind: str
+    filename: str
+
+
 class DeleteModelIn(BaseModel):
     filename: str
 
@@ -186,3 +252,4 @@ class PreviewIn(BaseModel):
     modelFilename: str = "$MODEL"
     vllmImage: str = ""
     llamaServerPath: str = ""
+    applySettings: bool = True
